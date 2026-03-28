@@ -26,15 +26,12 @@ export type DecodedMesh = {
   indices?: Uint16Array
   layerBounds?: Uint32Array
   uvOffsetAndScale?: Float32Array
-  normals?: Uint8Array
   texture?: DecodedTexture | null
 }
 
 export type DecodedNodeData = {
   matrixGlobeFromMesh?: ArrayLike<number>
   meshes?: DecodedMesh[]
-  overlaySurfaceMeshes?: DecodedMesh[]
-  waterMesh?: DecodedMesh | null
 }
 
 const nodePromises = new Map<string, Promise<DecodedNodeData>>()
@@ -89,18 +86,12 @@ export const decodeModelTexture = async (packet: ModelPacket, meshIndex: number)
 
   if (texture.textureFormat === 1)
     return {
-      width: texture.width,
-      height: texture.height,
-      flipY: true,
       contentType: 'image/jpeg',
       buffer: Buffer.from(texture.bytes ?? [])
     }
 
   if (texture.textureFormat === 6)
     return {
-      width: texture.width,
-      height: texture.height,
-      flipY: false,
       contentType: 'image/png',
       buffer: await sharp(decodeTextureRgba(texture), {
         raw: {

@@ -114,20 +114,9 @@ export const discoverPanos = async (
 export const getPanoDetail = async (panoId: string): Promise<PanoDetailResponse> => {
   const payload = (await fetchGoogleJson<unknown[]>(buildPhotometaUrl(panoId))) as any[]
   const root = payload[1]?.[0] as any[] | undefined
-  const dimensions = root?.[2]?.[2] ?? [0, 0]
-  const levelPairs = root?.[2]?.[3]?.[0] ?? []
-  const tileSize = root?.[2]?.[3]?.[1] ?? [512, 512]
   const titleBlock = root?.[3]?.[2] ?? []
   const poseBlock = root?.[5]?.[0] as any[] | undefined
   const location = poseBlock?.[1] ?? []
-  const links = (poseBlock?.[2]?.[0] ?? [])
-    .map((link: unknown[]) => parsePanoNode(link))
-    .filter(
-      (
-        link: Omit<PanoSummary, 'distanceMeters'> | null
-      ): link is Omit<PanoSummary, 'distanceMeters'> => Boolean(link)
-    )
-    .filter((link: Omit<PanoSummary, 'distanceMeters'>) => link.id !== panoId)
 
   return {
     pano: {
@@ -139,30 +128,7 @@ export const getPanoDetail = async (panoId: string): Promise<PanoDetailResponse>
       heading: location[2]?.[0] ?? 0,
       pitch: location[2]?.[1] ?? 0,
       roll: location[2]?.[2] ?? 0,
-      countryCode: location[4] ?? '',
-      dimensions: {
-        height: dimensions[0] ?? 0,
-        width: dimensions[1] ?? 0
-      },
-      tileSize: {
-        width: tileSize[0] ?? 512,
-        height: tileSize[1] ?? 512
-      },
-      levels: levelPairs.map((pair: unknown[], zoomIndex: number) => {
-        const size = pair[0] as any[] | undefined
-
-        return {
-          zoom: zoomIndex,
-          height: size?.[0] ?? 0,
-          width: size?.[1] ?? 0
-        }
-      }),
       previewUrl: buildPanoTileProxyUrl(panoId, 0, 0, 0)
-    },
-    links,
-    tiles: {
-      template: `/api/panos/${panoId}/tile?zoom={zoom}&x={x}&y={y}`,
-      recommendedZoom: Math.min(3, Math.max(levelPairs.length - 1, 0))
     }
   }
 }

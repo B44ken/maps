@@ -26,12 +26,6 @@ export type PanoSearchResponse = {
   panos: PanoSummary[]
 }
 
-export type PanoLevel = {
-  zoom: number
-  height: number
-  width: number
-}
-
 export type PanoDetail = {
   id: string
   title: string
@@ -41,26 +35,11 @@ export type PanoDetail = {
   heading: number
   pitch: number
   roll: number
-  countryCode: string
-  dimensions: {
-    height: number
-    width: number
-  }
-  tileSize: {
-    width: number
-    height: number
-  }
-  levels: PanoLevel[]
   previewUrl: string
 }
 
 export type PanoDetailResponse = {
   pano: PanoDetail
-  links: Array<Omit<PanoSummary, 'distanceMeters'>>
-  tiles: {
-    template: string
-    recommendedZoom: number
-  }
 }
 
 export type ModelPacket = {
@@ -78,9 +57,7 @@ export type ModelDiscoveryResponse = {
     lng: number
     meters: number
   }
-  sceneUrl: string
   octants: string[]
-  attribution: string[]
   bulk: ModelPacket[]
   nodes: ModelPacket[]
 }
@@ -88,20 +65,12 @@ export type ModelDiscoveryResponse = {
 export type ModelSceneMesh = {
   id: string
   positions: string
-  normals?: string
   uvs?: string
   indices: string
-  texture?: ModelSceneTexture
-}
-
-export type ModelSceneTexture =
-  {
-    kind: 'url'
-    width: number
-    height: number
-    flipY: boolean
+  texture?: {
     url: string
   }
+}
 
 export type ModelSceneResponse = {
   query: {
@@ -109,7 +78,6 @@ export type ModelSceneResponse = {
     lng: number
     meters: number
   }
-  octants: string[]
   nodes: {
     total: number
     rendered: number

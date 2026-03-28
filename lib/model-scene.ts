@@ -1,54 +1,16 @@
 import { discoverModel } from './model'
-import {
-  buildModelTextureUrl,
-  fetchDecodedNodeData,
-  type DecodedMesh,
-  type DecodedNodeData,
-  type DecodedTexture
-} from './model-texture'
-import type {
-  ModelPacket,
-  ModelSceneMesh,
-  ModelSceneResponse,
-  ModelSceneTexture
-} from './types'
-const maxConcurrentNodes = 16
+import { buildModelTextureUrl, fetchDecodedNodeData, type DecodedMesh } from './model-texture'
+import type { ModelPacket, ModelSceneMesh, ModelSceneResponse } from './types'
 
-const sortRenderableNodes = (nodes: ModelPacket[]) =>
+const sortNodes = (nodes: ModelPacket[]) =>
   [...nodes].sort(
     (left, right) => right.id.length - left.id.length || left.id.localeCompare(right.id)
   )
 
 const selectDeepestNodes = (nodes: ModelPacket[]) => {
-  const sorted = sortRenderableNodes(nodes)
-  const maxDepth = sorted[0]?.id.length
-
-  return maxDepth === undefined
-    ? []
-    : sorted.filter(packet => packet.id.length === maxDepth)
-}
-
-const selectRenderableNodes = (nodes: ModelPacket[], includeAncestors: boolean) =>
-  includeAncestors ? sortRenderableNodes(nodes) : selectDeepestNodes(nodes)
-
-const mapLimit = async <T, R>(
-  items: T[],
-  limit: number,
-  mapper: (item: T, index: number) => Promise<R>
-) => {
-  const results = new Array<R>(items.length)
-  let nextIndex = 0
-
-  await Promise.all(
-    Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, async () => {
-      while (nextIndex < items.length) {
-        const index = nextIndex++
-        results[index] = await mapper(items[index], index)
-      }
-    })
-  )
-
-  return results
+  const sorted = sortNodes(nodes)
+  const depth = sorted[0]?.id.length
+  return depth === undefined ? [] : sorted.filter(node => node.id.length === depth)
 }
 
 const toRadians = (value: number) => (value * Math.PI) / 180
@@ -71,40 +33,17 @@ const getLocalBasis = (lat: number, lng: number) => {
 const dot = (left: ArrayLike<number>, right: number[]) =>
   left[0] * right[0] + left[1] * right[1] + left[2] * right[2]
 
-const normalize = (value: number[]) => {
-  const length = Math.hypot(value[0], value[1], value[2]) || 1
-  return [value[0] / length, value[1] / length, value[2] / length]
-}
-
 const toLocalPoint = (
   point: ArrayLike<number>,
   center: number[],
   basis: ReturnType<typeof getLocalBasis>
 ) => {
-  const delta = [
-    point[0] - center[0],
-    point[1] - center[1],
-    point[2] - center[2]
-  ]
+  const delta = [point[0] - center[0], point[1] - center[1], point[2] - center[2]]
 
-  return [
-    dot(delta, basis.east),
-    dot(delta, basis.up),
-    -dot(delta, basis.north)
-  ]
+  return [dot(delta, basis.east), dot(delta, basis.up), -dot(delta, basis.north)]
 }
 
-const toLocalDirection = (
-  value: ArrayLike<number>,
-  basis: ReturnType<typeof getLocalBasis>
-) =>
-  normalize([dot(value, basis.east), dot(value, basis.up), -dot(value, basis.north)])
-
-const transformPosition = (
-  matrix: ArrayLike<number>,
-  vertices: Uint8Array,
-  index: number
-) => {
+const transformPosition = (matrix: ArrayLike<number>, vertices: Uint8Array, index: number) => {
   const offset = index * 8
   const x = vertices[offset]
   const y = vertices[offset + 1]
@@ -117,35 +56,10 @@ const transformPosition = (
   ]
 }
 
-const transformNormal = (
-  matrix: ArrayLike<number>,
-  normals: Uint8Array,
-  index: number,
-  basis: ReturnType<typeof getLocalBasis>
-) => {
-  const offset = index * 4
-  const x = normals[offset] - 127
-  const y = normals[offset + 1] - 127
-  const z = normals[offset + 2] - 127
-
-  return toLocalDirection(
-    [
-      x * matrix[0] + y * matrix[4] + z * matrix[8],
-      x * matrix[1] + y * matrix[5] + z * matrix[9],
-      x * matrix[2] + y * matrix[6] + z * matrix[10]
-    ],
-    basis
-  )
-}
-
 const toBase64 = (view: ArrayBufferView) =>
   Buffer.from(view.buffer, view.byteOffset, view.byteLength).toString('base64')
 
-const getTriangles = (
-  vertices: Uint8Array,
-  indices: Uint16Array,
-  layerBounds: Uint32Array
-) => {
+const getTriangles = (vertices: Uint8Array, indices: Uint16Array, layerBounds: Uint32Array) => {
   const triangles: number[] = []
   const limit = Math.min(indices.length - 2, layerBounds[3] ?? indices.length - 2)
 
@@ -172,38 +86,16 @@ const getTriangles = (
   return triangles
 }
 
-const toTexture = (
-  packet: ModelPacket,
-  meshIndex: number,
-  texture?: DecodedTexture | null
-): ModelSceneTexture | undefined => {
-  if (!texture)
-    return
-
-  return {
-    kind: 'url',
-    width: texture.width,
-    height: texture.height,
-    flipY: false,
-    url: buildModelTextureUrl(packet, meshIndex)
-  }
-}
-
-const decodeUvs = (
-  vertices: Uint8Array,
-  uvOffsetAndScale: Float32Array,
-  texture?: DecodedTexture | null
-) => {
+const decodeUvs = (vertices: Uint8Array, uvOffsetAndScale: Float32Array) => {
   const uvs = new Float32Array((vertices.length / 8) * 2)
 
   for (let index = 0; index < vertices.length / 8; index += 1) {
     const offset = index * 8
     const u = vertices[offset + 5] * 256 + vertices[offset + 4]
-    let v = vertices[offset + 7] * 256 + vertices[offset + 6]
+    const v = vertices[offset + 7] * 256 + vertices[offset + 6]
 
     uvs[index * 2] = (u + uvOffsetAndScale[0]) * uvOffsetAndScale[2]
-    v = (v + uvOffsetAndScale[1]) * uvOffsetAndScale[3]
-    uvs[index * 2 + 1] = v
+    uvs[index * 2 + 1] = (v + uvOffsetAndScale[1]) * uvOffsetAndScale[3]
   }
 
   return uvs
@@ -212,19 +104,16 @@ const decodeUvs = (
 const decodeMesh = (
   packet: ModelPacket,
   meshIndex: number,
-  id: string,
   matrix: ArrayLike<number>,
   mesh: DecodedMesh,
   center: number[],
   basis: ReturnType<typeof getLocalBasis>
 ) => {
   if (!mesh.vertices?.length || !mesh.indices?.length || !mesh.layerBounds?.length)
-    return null
+    return
 
   const vertexCount = mesh.vertices.length / 8
   const positions = new Float32Array(vertexCount * 3)
-  const normals =
-    mesh.normals?.length === vertexCount * 4 ? new Float32Array(vertexCount * 3) : null
 
   for (let index = 0; index < vertexCount; index += 1) {
     const point = toLocalPoint(transformPosition(matrix, mesh.vertices, index), center, basis)
@@ -232,36 +121,24 @@ const decodeMesh = (
     positions[offset] = point[0]
     positions[offset + 1] = point[1]
     positions[offset + 2] = point[2]
-
-    if (normals) {
-      const normal = transformNormal(matrix, mesh.normals!, index, basis)
-      normals[offset] = normal[0]
-      normals[offset + 1] = normal[1]
-      normals[offset + 2] = normal[2]
-    }
   }
 
   const triangles = getTriangles(mesh.vertices, mesh.indices, mesh.layerBounds)
 
   if (!triangles.length)
-    return null
+    return
 
   const result: ModelSceneMesh = {
-    id,
+    id: `${packet.id}:${meshIndex}`,
     positions: toBase64(positions),
     indices: toBase64(Uint32Array.from(triangles))
   }
 
-  if (normals)
-    result.normals = toBase64(normals)
-
   if (mesh.uvOffsetAndScale)
-    result.uvs = toBase64(decodeUvs(mesh.vertices, mesh.uvOffsetAndScale, mesh.texture))
+    result.uvs = toBase64(decodeUvs(mesh.vertices, mesh.uvOffsetAndScale))
 
-  const texture = toTexture(packet, meshIndex, mesh.texture)
-
-  if (texture)
-    result.texture = texture
+  if (mesh.texture)
+    result.texture = { url: buildModelTextureUrl(packet, meshIndex) }
 
   return result
 }
@@ -269,97 +146,46 @@ const decodeMesh = (
 export const discoverModelScene = async (
   lat: number,
   lng: number,
-  meters = 295,
-  includeAncestors = false
+  meters = 295
 ): Promise<ModelSceneResponse> => {
   const model = await discoverModel(lat, lng, meters)
-  const selectedNodes = selectRenderableNodes(model.nodes, includeAncestors)
+  const nodes = selectDeepestNodes(model.nodes)
+  const decoded = await Promise.all(
+    nodes.map(async packet => ({ packet, node: await fetchDecodedNodeData(packet) }))
+  )
+  const center = decoded.length
+    ? decoded.reduce(
+        (sum, { node }) => {
+          const matrix = node.matrixGlobeFromMesh ?? []
+          sum[0] += matrix[12] ?? 0
+          sum[1] += matrix[13] ?? 0
+          sum[2] += matrix[14] ?? 0
+          return sum
+        },
+        [0, 0, 0]
+      )
+    : [0, 0, 0]
 
-  const decodedNodes = await mapLimit(selectedNodes, maxConcurrentNodes, async packet => ({
-    packet,
-    node: await fetchDecodedNodeData(packet)
-  }))
-
-  const center =
-    decodedNodes.length === 0
-      ? [0, 0, 0]
-      : decodedNodes.reduce(
-          (sum, { node }) => {
-            const matrix = node.matrixGlobeFromMesh ?? []
-            sum[0] += matrix[12] ?? 0
-            sum[1] += matrix[13] ?? 0
-            sum[2] += matrix[14] ?? 0
-            return sum
-          },
-          [0, 0, 0]
-        )
-
-  if (decodedNodes.length) {
-    center[0] /= decodedNodes.length
-    center[1] /= decodedNodes.length
-    center[2] /= decodedNodes.length
+  if (decoded.length) {
+    center[0] /= decoded.length
+    center[1] /= decoded.length
+    center[2] /= decoded.length
   }
 
   const basis = getLocalBasis(lat, lng)
-  const meshes: ModelSceneMesh[] = []
-
-  for (const { packet, node } of decodedNodes) {
-    for (let index = 0; index < (node.meshes?.length ?? 0); index += 1) {
-      const mesh = decodeMesh(
-        packet,
-        index,
-        `${packet.id}:${index}`,
-        node.matrixGlobeFromMesh ?? [],
-        node.meshes![index],
-        center,
-        basis
+  const meshes = decoded.flatMap(({ packet, node }) =>
+    (node.meshes ?? [])
+      .map((mesh, index) =>
+        decodeMesh(packet, index, node.matrixGlobeFromMesh ?? [], mesh, center, basis)
       )
-
-      if (mesh)
-        meshes.push(mesh)
-    }
-
-    for (let index = 0; index < (node.overlaySurfaceMeshes?.length ?? 0); index += 1) {
-      const mesh = decodeMesh(
-        packet,
-        index,
-        `${packet.id}:overlay:${index}`,
-        node.matrixGlobeFromMesh ?? [],
-        node.overlaySurfaceMeshes![index],
-        center,
-        basis
-      )
-
-      if (mesh)
-        meshes.push(mesh)
-    }
-
-    if (node.waterMesh) {
-      const mesh = decodeMesh(
-        packet,
-        0,
-        `${packet.id}:water`,
-        node.matrixGlobeFromMesh ?? [],
-        node.waterMesh,
-        center,
-        basis
-      )
-
-      if (mesh)
-        meshes.push(mesh)
-    }
-  }
+      .filter((mesh): mesh is ModelSceneMesh => !!mesh)
+  )
 
   return {
-    query: {
-      lat,
-      lng,
-      meters
-    },
-    octants: model.octants,
+    query: { lat, lng, meters },
     nodes: {
       total: model.nodes.length,
-      rendered: selectedNodes.length
+      rendered: nodes.length
     },
     meshes
   }

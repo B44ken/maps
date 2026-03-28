@@ -11,9 +11,6 @@ import type { ModelDiscoveryResponse, ModelPacket } from './types'
 
 const maxOctantLevel = 20
 
-const buildSceneUrl = (lat: number, lng: number, meters: number) =>
-  `https://www.google.com/maps/@${lat},${lng},${meters}m/data=!3m1!1e3`
-
 const buildBulkUrl = (path: string, version: number) =>
   `https://kh.google.com/rt/earth/BulkMetadata/pb=!1m2!1s${path}!2u${version}`
 
@@ -221,9 +218,7 @@ export const discoverModel = async (
 
   return {
     query: { lat, lng, meters },
-    sceneUrl: buildSceneUrl(lat, lng, meters),
     octants,
-    attribution: [],
     bulk: sortPackets([...bulkPackets.values()]),
     nodes: sortPackets([...nodePackets.values()])
   }
