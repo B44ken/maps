@@ -14,15 +14,8 @@ const maxOctantLevel = 20
 const buildBulkUrl = (path: string, version: number) =>
   `https://kh.google.com/rt/earth/BulkMetadata/pb=!1m2!1s${path}!2u${version}`
 
-export const buildNodeUrl = (
-  path: string,
-  version: number,
-  textureFormat: number,
-  imageryEpoch?: number
-) =>
-  `https://kh.google.com/rt/earth/NodeData/pb=!1m2!1s${path}!2u${version}!2e${textureFormat}${
-    imageryEpoch === undefined ? '' : `!3u${imageryEpoch}`
-  }!4b0`
+export const buildNodeUrl = (path: string, ver: number, texFmt: number, epoch?: number) =>
+  `https://kh.google.com/rt/earth/NodeData/pb=!1m2!1s${path}!2u${ver}!2e${texFmt}${epoch === undefined ? '' : `!3u${epoch}`}!4b0`
 
 const buildNodeProxyUrl = (
   path: string,
@@ -68,11 +61,7 @@ const getFirstOctant = (lat: number, lng: number) => {
   return ['31', { n: 90, s: 0, w: 90, e: 180 }] as const
 }
 
-const getNextOctant = (
-  box: { n: number; s: number; w: number; e: number },
-  lat: number,
-  lng: number
-) => {
+const getNextOctant = (box: { n: number; s: number; w: number; e: number },lat: number,lng: number) => {
   let { n, s, w, e } = box
   const midLat = (n + s) / 2
   const midLng = (w + e) / 2
@@ -186,11 +175,7 @@ const toNodePacket = (entry: BulkEntry): ModelPacket => {
   }
 }
 
-export const discoverModel = async (
-  lat: number,
-  lng: number,
-  meters = 295
-): Promise<ModelDiscoveryResponse> => {
+export const discoverModel = async (lat: number,lng: number,meters: number): Promise<ModelDiscoveryResponse> => {
   const octantsByLevel = await findOctants(lat, lng, maxOctantLevel)
   const deepestLevel = [...octantsByLevel.keys()].sort((left, right) => right - left)[0]
   const octants = deepestLevel === undefined ? [] : octantsByLevel.get(deepestLevel) ?? []

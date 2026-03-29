@@ -47,9 +47,12 @@ export const fetchDecodedNodeData = async (packet: ModelPacket) => {
 }
 
 export const buildModelTextureUrl = (packet: ModelPacket, meshIndex: number) => {
+  if (packet.textureFormat === undefined)
+    throw new Error(`missing textureFormat for ${packet.id}`)
+
   const params = new URLSearchParams({
     version: String(packet.version),
-    textureFormat: String(packet.textureFormat ?? 6)
+    textureFormat: String(packet.textureFormat)
   })
 
   if (packet.imageryEpoch !== undefined)
@@ -58,51 +61,37 @@ export const buildModelTextureUrl = (packet: ModelPacket, meshIndex: number) => 
   return `/api/model/texture/${packet.id}/${meshIndex}?${params}`
 }
 
-export const decodeTextureRgba = (texture: DecodedTexture) => {
-  if (texture.textureFormat !== 6)
-    throw new Error(`raw rgba only supported for textureFormat=6, got ${texture.textureFormat}`)
+export const decodeTextureRgba = (tex: DecodedTexture) => {
+  if (tex.textureFormat !== 6)
+    throw new Error(`raw rgba only supported for textureFormat=6, got ${tex.textureFormat}`)
 
-  const bytes = texture.bytes
-
-  if (!bytes)
-    throw new Error('missing dxt texture bytes')
-
-  return Buffer.from(
-    decodeDXT(
-      new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength),
-      texture.width,
-      texture.height,
-      'dxt1'
-    )
-  )
+  const b = tex.bytes
+  if (!b) throw new Error('missing dxt texture bytes')
+  return Buffer.from(decodeDXT(new DataView(b.buffer, b.byteOffset, b.byteLength), tex.width, tex.height, 'dxt1') as unknown as Uint8Array)
 }
 
 export const decodeModelTexture = async (packet: ModelPacket, meshIndex: number) => {
   const node = await fetchDecodedNodeData(packet)
-  const texture = node.meshes?.[meshIndex]?.texture
+  const tex = node.meshes?.[meshIndex]?.texture
 
-  if (!texture)
+  if (!tex)
     throw new Error(`missing texture for ${packet.id}:${meshIndex}`)
 
-  if (texture.textureFormat === 1)
+  if (tex.textureFormat === 1) {
+    if (!tex.bytes)
+      throw new Error(`missing jpeg texture bytes for ${packet.id}:${meshIndex}`)
+
     return {
       contentType: 'image/jpeg',
-      buffer: Buffer.from(texture.bytes ?? [])
+      buffer: Buffer.from(tex.bytes)
     }
+  }
 
-  if (texture.textureFormat === 6)
+  if (tex.textureFormat === 6)
     return {
       contentType: 'image/png',
-      buffer: await sharp(decodeTextureRgba(texture), {
-        raw: {
-          width: texture.width,
-          height: texture.height,
-          channels: 4
-        }
-      })
-        .png()
-        .toBuffer()
+      buffer: await sharp(decodeTextureRgba(tex), { raw: { width: tex.width, height: tex.height, channels: 4 }}).png().toBuffer()
     }
 
-  throw new Error(`unknown textureFormat ${texture.textureFormat}`)
+  throw new Error(`unknown textureFormat ${tex.textureFormat}`)
 }

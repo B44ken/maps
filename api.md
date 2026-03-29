@@ -14,11 +14,6 @@ minimal next.js api for reverse-engineered google maps panos and google earth mo
 
 finds nearby pano ids from `photometa/ac/v1`.
 
-defaults:
-
-- `zoom=17`
-- `radius=1`
-
 response:
 
 ```json
@@ -71,10 +66,6 @@ proxies `streetviewpixels-pa.googleapis.com/v1/tile`.
 
 walks the rocktree bulk chain for the point and returns the deepest covering octants plus the bulk and rich-3d node packets around them.
 
-default:
-
-- `meters=295`
-
 response:
 
 ```json
@@ -120,10 +111,6 @@ decodes one mesh texture from a node packet and serves it as:
 
 decodes all deepest nearby node packets into local-space triangle meshes.
 
-default:
-
-- `meters=295`
-
 notes:
 
 - only the deepest node depth is rendered
@@ -154,4 +141,5 @@ response:
 
 - `PlanetoidMetadata` and `BulkMetadata` are decoded with a minimal inline `rocktree.proto`
 - `NodeData` is decoded with vendored upstream logic in [lib/vendor/decode-resource.cjs](/Users/brad/downloads/gmapscdx/lib/vendor/decode-resource.cjs)
+- api routes validate required query params and stop defaulting missing inputs
 - the page only uses the routes above. compare and validation routes were intentionally removed

@@ -1,29 +1,13 @@
-import { proxyGoogle, readNumber } from '@/lib/google'
+import { proxyGoogle, readNumber, readParamNumbers } from '@/lib/google'
+export const runtime = 'nodejs', dynamic = 'force-dynamic'
 
-export const runtime = 'nodejs'
-export const dynamic = 'force-dynamic'
-
-export async function GET(
-  request: Request,
-  context: { params: Promise<{ nodeId: string }> }
-) {
+export async function GET(request: Request,context: { params: Promise<{ nodeId: string }> }) {
   const url = new URL(request.url)
+  const { searchParams } = url
   const { nodeId } = await context.params
-  const version = readNumber(url.searchParams.get('version'), 'version', 973)
-  const textureFormat = readNumber(
-    url.searchParams.get('textureFormat'),
-    'textureFormat',
-    6
-  )
-  const imageryEpochValue = url.searchParams.get('imageryEpoch')
-  const imageryEpoch =
-    imageryEpochValue === null
-      ? ''
-      : `!3u${Math.trunc(readNumber(imageryEpochValue, 'imageryEpoch'))}`
+  const { version, textureFormat } = readParamNumbers(url, ['version', 'textureFormat'])
+  const ie = searchParams.get('imageryEpoch')
+  const ieValue = ie === null ? '' : `!3u${Math.trunc(readNumber(ie, 'imageryEpoch'))}`
 
-  return proxyGoogle(
-    `https://kh.google.com/rt/earth/NodeData/pb=!1m2!1s${nodeId}!2u${Math.trunc(
-      version
-    )}!2e${Math.trunc(textureFormat)}${imageryEpoch}!4b0`
-  )
+  return proxyGoogle(`https://kh.google.com/rt/earth/NodeData/pb=!1m2!1s${nodeId}!2u${Math.trunc(version)}!2e${Math.trunc(textureFormat)}${ieValue}!4b0`)
 }
