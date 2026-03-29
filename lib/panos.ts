@@ -1,5 +1,5 @@
 import { fetchGoogleJson, haversineMeters, latLngToTile, tileNeighbors } from './google'
-import type { PanoDetailResponse, PanoSearchResponse, PanoSummary, TileRef } from './types'
+import type { PanoDetail, PanoSearchResponse, PanoSummary, TileRef } from './types'
 
 const buildAutocompleteUrl = ({ x, y, z }: TileRef) =>
   `https://www.google.com/maps/photometa/ac/v1?pb=!1m1!1smaps_sv.tactile!6m3!1i${x}!2i${y}!3i${z}!8b1`
@@ -30,12 +30,8 @@ const parsePanoNode = (node: unknown[]): Omit<PanoSummary, 'distanceMeters'> | n
     return null
 
   const pose = node[2] as any[]
-  const labels = Array.isArray(node[3]) ? (node[3] as any[]) : []
 
-  return {
-    lat: pose[0][2], lng: pose[0][3], heading: pose[2][0], pitch: pose[2][1], roll: pose[2][2],
-    id: identity[1], label: labels[2]?.[0]?.[0] ?? ''
-  }
+  return { lat: pose[0][2], lng: pose[0][3], heading: pose[2][0], pitch: pose[2][1], roll: pose[2][2], id: identity[1] }
 }
 
 export const discoverPanos = async (lat: number, lng: number, zoom: number, radius: number): Promise<PanoSearchResponse> => {
@@ -55,16 +51,13 @@ export const discoverPanos = async (lat: number, lng: number, zoom: number, radi
   return { query: { lat, lng, zoom, radius }, tiles, panos: [...panos.values()].sort((a, b) => a.distanceMeters - b.distanceMeters) }
 }
 
-export const getPanoDetail = async (panoId: string): Promise<PanoDetailResponse> => {
+export const getPanoDetail = async (panoId: string): Promise<PanoDetail> => {
   const payload = (await fetchGoogleJson<unknown[]>(buildPhotometaUrl(panoId))) as any[]
-  const root = payload[1]?.[0] as any[] | undefined
-  const titles = root?.[3]?.[2] ?? []
-  const location = root?.[5]?.[0]?.[1] ?? []
+  const root = payload[1]?.[0]
+  const titles = root?.[3]?.[2], location = root?.[5]?.[0]?.[1]
 
   return {
-    pano: {
-      id: root?.[1]?.[1], lat: location[0]?.[2], lng: location[0]?.[3], heading: location[2]?.[0], pitch: location[2]?.[1], roll: location[2]?.[2],
-      title: titles[0]?.[0] ?? '', subtitle: titles[1]?.[0] ?? '', previewUrl: buildPanoTileProxyUrl(panoId, 0, 0, 0)
-    }
+    id: root?.[1]?.[1], lat: location[0]?.[2], lng: location[0]?.[3], heading: location[2]?.[0], pitch: location[2]?.[1], roll: location[2]?.[2],
+    title: titles[0]?.[0], subtitle: titles[1]?.[0], previewUrl: buildPanoTileProxyUrl(panoId, 0, 0, 0)
   }
 }

@@ -4,88 +4,90 @@ import { useEffect, useRef } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 
-import type { ModelSceneResponse } from '@/lib/types'
+import { buildModelScene } from '@/lib/model-scene'
+import type { ModelDiscoveryResponse } from '@/lib/types'
 
-const decodeFloat32 = (value: string) => {
-  const bytes = Uint8Array.from(atob(value), char => char.charCodeAt(0))
-  return new Float32Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / 4)
+const tex = (x: Awaited<ReturnType<typeof buildModelScene>>[number]['texture']) => {
+  const t = new THREE.DataTexture(x.data, x.w, x.h, THREE.RGBAFormat)
+  t.colorSpace = THREE.SRGBColorSpace
+  t.flipY = false
+  t.needsUpdate = true
+  return t
 }
 
-const decodeUint32 = (value: string) => {
-  const bytes = Uint8Array.from(atob(value), char => char.charCodeAt(0))
-  return new Uint32Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / 4)
-}
-
-export function ModelViewer({ scene }: { scene: ModelSceneResponse | null }) {
-  const hostRef = useRef<HTMLDivElement | null>(null)
+export function ModelViewer({ model }: { model: ModelDiscoveryResponse }) {
+  const ref = useRef<HTMLDivElement>(null!)
 
   useEffect(() => {
-    if (!hostRef.current || !scene) return
+    const host = ref.current
+    let dead = false, frame = 0
+    const gs: THREE.BufferGeometry[] = [], ms: THREE.Material[] = [], ts: THREE.Texture[] = []
+    const done: (() => void)[] = []
 
-    const host = hostRef.current
-    const world = new THREE.Scene()
-    const camera = new THREE.PerspectiveCamera()
-    const renderer = new THREE.WebGLRenderer()
-    const controls = new OrbitControls(camera, renderer.domElement)
-    const loader = new THREE.TextureLoader()
-    const geometries: THREE.BufferGeometry[] = []
-    const materials: THREE.Material[] = []
-    const textures: THREE.Texture[] = []
+    host.replaceChildren()
 
-    host.replaceChildren(renderer.domElement)
+    void (async () => {
+      const meshes = await buildModelScene(model)
+      if (dead) return
 
-    for (const mesh of scene.meshes) {
-      const geom = new THREE.BufferGeometry()
-      geom.setAttribute('position', new THREE.BufferAttribute(decodeFloat32(mesh.positions), 3))
-      geom.setIndex(new THREE.BufferAttribute(decodeUint32(mesh.indices), 1))
+      const world = new THREE.Scene(), camera = new THREE.PerspectiveCamera()
+      const renderer = new THREE.WebGLRenderer()
+      const controls = new OrbitControls(camera, renderer.domElement)
+      done.push(() => controls.dispose(), () => renderer.dispose())
 
-      if (mesh.uvs)
-        geom.setAttribute('uv', new THREE.BufferAttribute(decodeFloat32(mesh.uvs), 2))
+      host.replaceChildren(renderer.domElement)
 
-      const material = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide })
+      for (const mesh of meshes) {
+        const g = new THREE.BufferGeometry()
+        g.setAttribute('position', new THREE.BufferAttribute(mesh.positions, 3))
+        g.setIndex(new THREE.BufferAttribute(mesh.indices, 1))
 
-      if (mesh.texture) {
-        const texture = loader.load(mesh.texture.url)
-        texture.colorSpace = THREE.SRGBColorSpace
-        texture.flipY = false
-        material.map = texture
-        textures.push(texture)
+        if (mesh.uvs)
+          g.setAttribute('uv', new THREE.BufferAttribute(mesh.uvs, 2))
+
+        const m = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide })
+        const t = tex(mesh.texture)
+        m.map = t
+        ts.push(t)
+
+        gs.push(g)
+        ms.push(m)
+        world.add(new THREE.Mesh(g, m))
       }
 
-      geometries.push(geom)
-      materials.push(material)
-      world.add(new THREE.Mesh(geom, material))
-    }
+      const box = new THREE.Box3().setFromObject(world)
+      const c = box.getCenter(new THREE.Vector3())
+      const size = box.getSize(new THREE.Vector3()).length() || 200
 
-    const box = new THREE.Box3().setFromObject(world)
-    const center = box.getCenter(new THREE.Vector3())
-    const size = box.getSize(new THREE.Vector3()).length() || 200
+      controls.target.copy(c)
+      camera.position.set(c.x + size * 0.7, c.y + size * 0.45, c.z + size)
+      camera.near = Math.max(1, size / 500)
+      camera.far = size * 10
+      camera.aspect = 1
+      camera.updateProjectionMatrix()
+      camera.lookAt(c)
 
-    controls.target.copy(center)
-    camera.position.set(center.x + size * 0.7, center.y + size * 0.45, center.z + size)
-    camera.lookAt(center)
+      renderer.setSize(750, 750, false)
 
-    renderer.setSize(750, 750, false)
+      const tick = () => {
+        controls.update()
+        renderer.render(world, camera)
+        frame = requestAnimationFrame(tick)
+      }
 
-    let frame = 0
-    const tick = () => {
-      controls.update()
-      renderer.render(world, camera)
-      frame = requestAnimationFrame(tick)
-    }
-
-    tick()
+      tick()
+    })()
 
     return () => {
+      dead = true
       cancelAnimationFrame(frame)
-      controls.dispose()
-      renderer.dispose()
-      textures.forEach(texture => texture.dispose())
-      materials.forEach(material => material.dispose())
-      geometries.forEach(geometry => geometry.dispose())
+      done.forEach(f => f())
+      ts.forEach(t => t.dispose())
+      ms.forEach(m => m.dispose())
+      gs.forEach(g => g.dispose())
       host.replaceChildren()
     }
-  }, [scene])
+  }, [model])
 
-  return <div ref={hostRef} style={{ width: '100%', aspectRatio: '3 / 2' }} />
+  return <div ref={ref} style={{ width: '100%', aspectRatio: '3 / 2' }} />
 }

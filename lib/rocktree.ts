@@ -43,19 +43,13 @@ type RawNodeMetadata = {
 }
 
 type RawBulkMetadata = {
-  headNodeKey?: {
-    path?: string
-  }
+  headNodeKey?: { path?: string }
   defaultImageryEpoch?: number
   defaultAvailableTextureFormats?: number
   nodeMetadata?: RawNodeMetadata[]
 }
 
-type RawPlanetoidMetadata = {
-  rootNodeMetadata?: {
-    bulkMetadataEpoch?: number
-  }
-}
+type RawPlanetoidMetadata = { rootNodeMetadata?: { bulkMetadataEpoch?: number } }
 
 export type BulkEntry = {
   path: string
@@ -69,12 +63,7 @@ export type BulkEntry = {
   hasObb: boolean
 }
 
-export type BulkPacket = {
-  headPath: string
-  epoch: number
-  entries: BulkEntry[]
-  byPath: Map<string, BulkEntry>
-}
+export type BulkPacket = { entries: BulkEntry[], byPath: Map<string, BulkEntry> }
 
 const root = parse(rocktreeProto).root
 const planetoidType = root.lookupType(
@@ -103,7 +92,7 @@ const pickTextureFormat = (mask: number) =>
 const decodePlanetoid = (payload: Uint8Array) =>
   planetoidType.decode(payload) as unknown as RawPlanetoidMetadata
 
-const decodeBulk = (payload: Uint8Array, epoch: number) => {
+const decodeBulk = (payload: Uint8Array) => {
   const decoded = bulkType.decode(payload) as unknown as RawBulkMetadata
   const headPath = decoded.headNodeKey?.path ?? ''
   const entries =
@@ -128,25 +117,18 @@ const decodeBulk = (payload: Uint8Array, epoch: number) => {
     }) ?? []
 
   return {
-    headPath,
-    epoch,
     entries,
     byPath: new Map(entries.map(entry => [entry.path, entry]))
   } satisfies BulkPacket
 }
 
-const planetoidPromise = fetchGoogleBuffer(
-  'https://kh.google.com/rt/earth/PlanetoidMetadata'
-).then(decodePlanetoid)
+const planetoidPromise = fetchGoogleBuffer('https://kh.google.com/rt/earth/PlanetoidMetadata').then(decodePlanetoid)
 
 const bulkPromises = new Map<string, Promise<BulkPacket>>()
 
 export const getRootBulkEpoch = async () => {
   const epoch = (await planetoidPromise).rootNodeMetadata?.bulkMetadataEpoch
-
-  if (epoch === undefined)
-    throw new Error('missing root bulk epoch')
-
+  if (epoch === undefined) throw new Error('missing root bulk epoch')
   return epoch
 }
 
@@ -154,24 +136,12 @@ export const fetchBulk = async (path: string, epoch: number) => {
   const key = `${path}:${epoch}`
 
   if (!bulkPromises.has(key))
-    bulkPromises.set(
-      key,
-      fetchGoogleBuffer(
-        `https://kh.google.com/rt/earth/BulkMetadata/pb=!1m2!1s${path}!2u${epoch}`
-      ).then(payload => decodeBulk(payload, epoch))
-    )
+    bulkPromises.set(key, fetchGoogleBuffer(`https://kh.google.com/rt/earth/BulkMetadata/pb=!1m2!1s${path}!2u${epoch}`).then(decodeBulk))
 
   return bulkPromises.get(key)!
 }
 
-export const getBulkRelativePath = (path: string) =>
-  path.slice(Math.floor((path.length - 1) / 4) * 4)
-
-export const getBulkEntry = (bulk: BulkPacket, path: string) =>
-  bulk.byPath.get(getBulkRelativePath(path))
-
-export const canDescendToBulk = (entry: BulkEntry | undefined) =>
-  !!entry && entry.path.length === 4 && !(entry.flags & 4)
-
-export const hasRich3dData = (entry: BulkEntry | undefined) =>
-  !!entry && !(entry.flags & 2)
+export const getBulkRelativePath = (p: string) => p.slice(Math.floor((p.length - 1) / 4) * 4)
+export const getBulkEntry = (b: BulkPacket, p: string) => b.byPath.get(getBulkRelativePath(p))
+export const canDescendToBulk = (e: BulkEntry | undefined) => !!e && e.path.length === 4 && !(e.flags & 4)
+export const hasRich3dData = (e: BulkEntry | undefined) => !!e && !(e.flags & 2)

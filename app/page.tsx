@@ -1,99 +1,80 @@
 'use client'
-
+import type { ModelDiscoveryResponse, PanoSearchResponse } from '@/lib/types'
 import { useEffect, useState } from 'react'
-
 import { ModelViewer } from '@/components/model-viewer'
-import type {
-  ModelSceneResponse,
-  PanoDetailResponse,
-  PanoSearchResponse
-} from '@/lib/types'
 import { App, Card, Input, Btn, Grid, D, Muted, Scroll, H2, B } from 'b44ui'
 
-const defaultLat = '43.66'
-const defaultLng = '-79.42'
-const defaultMeters = '295'
-const defaultZoom = '17'
-const defaultRadius = '1'
-const visiblePanos = 64
-
-const readInitial = () => {
-  const params = new URLSearchParams(window.location.search)
-  return { lat: params.get('lat') ?? defaultLat, lng: params.get('lng') ?? defaultLng }
-}
+const lat0 = '43.66', lng0 = '-79.42', zoom0 = '17', radius0 = '1', blank = 'data:,'
 
 export default function Page() {
-  const [lat, setLat] = useState(defaultLat)
-  const [lng, setLng] = useState(defaultLng)
+  const [lat, setLat] = useState(lat0)
+  const [lng, setLng] = useState(lng0)
   const [panos, setPanos] = useState<PanoSearchResponse | null>(null)
-  const [selectedPano, setSelectedPano] = useState<PanoDetailResponse | null>(null)
-  const [scene, setScene] = useState<ModelSceneResponse | null>(null)
+  const [panoUrl, setPanoUrl] = useState(blank)
+  const [model, setModel] = useState<ModelDiscoveryResponse | null>(null)
 
-  const loadPano = async (panoId: string) => {
-    const resp = await fetch(`/api/panos/${panoId}`)
-    if (!resp.ok) throw new Error(`pano request failed: ${resp.status}`)
-    setSelectedPano(await resp.json())
+  const loadPano = async (id: string) => {
+    const r = await fetch(`/api/panos/${id}`)
+    if (!r.ok) throw new Error(`pano request failed: ${r.status}`)
+    setPanoUrl((await r.json()).pano.previewUrl)
   }
 
-  const load = async (nextLat = lat, nextLng = lng) => {
-    const panoSearch = new URLSearchParams({ lat: nextLat, lng: nextLng, zoom: defaultZoom, radius: defaultRadius })
-    const modelSearch = new URLSearchParams({ lat: nextLat, lng: nextLng, meters: defaultMeters })
-    const [panosResponse, sceneResponse] = await Promise.all([
-      fetch(`/api/panos?${panoSearch}`),
-      fetch(`/api/model/scene?${modelSearch}`)
+  const load = async (a = lat, b = lng) => {
+    const [panoReq, modelReq] = await Promise.all([
+      fetch(`/api/panos?lat=${a}&lng=${b}&zoom=${zoom0}&radius=${radius0}`),
+      fetch(`/api/model?lat=${a}&lng=${b}`)
     ])
 
-    if (!panosResponse.ok || !sceneResponse.ok)
-      throw new Error('scene request failed')
+    if (!panoReq.ok || !modelReq.ok)
+      throw new Error('model request failed')
 
-    const nextPanos = (await panosResponse.json()) as PanoSearchResponse
-    setPanos(nextPanos)
-    setScene((await sceneResponse.json()) as ModelSceneResponse)
+    const panos = (await panoReq.json()) as PanoSearchResponse
+    setPanos(panos)
+    setModel((await modelReq.json()) as ModelDiscoveryResponse)
 
-    const panoId = nextPanos.panos[0]?.id
-
-    if (panoId)
-      await loadPano(panoId)
+    if (panos.panos.length)
+      await loadPano(panos.panos[0].id)
     else
-      setSelectedPano(null)
+      setPanoUrl(blank)
 
-    const url = new URL(window.location.href)
-    url.searchParams.set('lat', nextLat)
-    url.searchParams.set('lng', nextLng)
-    window.history.replaceState(null, '', url)
+    const u = new URL(window.location.href)
+    u.searchParams.set('lat', a)
+    u.searchParams.set('lng', b)
+    window.history.replaceState(null, '', u)
   }
 
   useEffect(() => {
-    const initial = readInitial()
-    setLat(initial.lat)
-    setLng(initial.lng)
-    void load(initial.lat, initial.lng)
+    const p = new URLSearchParams(window.location.search)
+    const lat = p.get('lat') || lat0, lng = p.get('lng') || lng0
+    setLat(lat)
+    setLng(lng)
+    void load(lat, lng)
   }, [])
 
   return <App htScreen>
     <Card row>
       <H2 grow>maps viewer</H2>
-      <Input state={[lat, setLat]} placeholder='lat' /> 
+      <Input state={[lat, setLat]} placeholder='lat' />
       <Input state={[lng, setLng]} placeholder='lng' />
       <Btn onClick={() => void load()}>Load</Btn>
     </Card>
 
     <Grid grow>
       <Card>
-        <b>panos (found {panos?.panos.length ?? 0})</b>
+        <b>panos (found {panos?.panos.length})</b>
 
         <D wd={1} col align='mid'>
           <D style={{ aspectRatio: '2/1', overflow: 'hidden' }}>
-            <img src={selectedPano?.pano.previewUrl} />
+            <img src={panoUrl} />
           </D>
         </D>
 
         <Scroll>
           <Grid cols={3} gap={3}>
-            {panos?.panos.slice(0, visiblePanos).map(({ lat, lng }, i) =>
-              <Btn key={i} p={2} row onClick={() => loadPano(panos.panos[i].id)}>
+            {panos?.panos.map(({ id, lat, lng, distanceMeters }) =>
+              <Btn key={id} p={2} row onClick={() => loadPano(id)}>
                 <B grow>{lat.toFixed(4)}, {lng.toFixed(4)}</B>
-                <Muted>{panos.panos[i].distanceMeters.toFixed()}m away</Muted>
+                <Muted>{distanceMeters.toFixed()}m away</Muted>
               </Btn>
             )}
           </Grid>
@@ -102,7 +83,7 @@ export default function Page() {
 
       <Card>
         <b>model</b>
-        <ModelViewer scene={scene} />
+        {model && <ModelViewer model={model} />}
       </Card>
     </Grid>
   </App>

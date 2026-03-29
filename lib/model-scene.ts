@@ -1,128 +1,132 @@
-import { discoverModel } from './model'
-import { buildModelTextureUrl, fetchDecodedNodeData, type DecodedMesh } from './model-texture'
-import type { ModelPacket, ModelSceneMesh, ModelSceneResponse } from './types'
+import decodeDXT from 'decode-dxt'
 
-const sortNodes = (nodes: ModelPacket[]) =>
-  [...nodes].sort((left, right) => right.id.length - left.id.length || left.id.localeCompare(right.id))
+import { buildNodeProxyUrl } from './model'
+import type { ModelDiscoveryResponse, NodeRef } from './types'
 
-const selectDeepestNodes = (nodes: ModelPacket[]) => {
-  const sorted = sortNodes(nodes)
-  const depth = sorted[0]?.id.length
-  return depth === undefined ? [] : sorted.filter(node => node.id.length === depth)
+type DecodedMesh = {
+  vertices: Uint8Array, indices: Uint16Array, layerBounds: Uint32Array, uvOffsetAndScale?: Float32Array
+  texture: { textureFormat: number, bytes: Uint8Array, width: number, height: number }
 }
 
-const radians = (value: number) => (value * Math.PI) / 180
+type DecodedNode = { matrixGlobeFromMesh: ArrayLike<number>, meshes: DecodedMesh[] }
 
-const getLocalBasis = (lat: number, lng: number) => {
-  const sinLat = Math.sin(radians(lat)), cosLat = Math.cos(radians(lat))
-  const sinLng = Math.sin(radians(lng)), cosLng = Math.cos(radians(lng))
+const decodeNode = import('./vendor/decode-resource.cjs').then(m => m.default as (c: number, p: Uint8Array) => Promise<{ payload: DecodedNode }>)
+
+type SceneTexture = { data: Uint8Array; w: number; h: number }
+
+export type SceneMesh = {
+  positions: Float32Array
+  indices: Uint32Array
+  uvs?: Float32Array
+  texture: SceneTexture
+}
+
+const decodeDxt1 = decodeDXT as unknown as (data: DataView, w: number, h: number, fmt: 'dxt1') => Uint8Array
+
+const basis = (lat: number, lng: number) => {
+  const a = lat * Math.PI / 180, b = lng * Math.PI / 180
+  const sa = Math.sin(a), ca = Math.cos(a), sb = Math.sin(b), cb = Math.cos(b)
 
   return {
-    east: [-sinLng, cosLng, 0],
-    north: [-sinLat * cosLng, -sinLat * sinLng, cosLat],
-    up: [cosLat * cosLng, cosLat * sinLng, sinLat]
+    east: [-sb, cb, 0],
+    north: [-sa * cb, -sa * sb, ca],
+    up: [ca * cb, ca * sb, sa]
   }
 }
 
 const dot = (a: ArrayLike<number>, b: number[]) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
 
-const toLocalPoint = (point: ArrayLike<number>, center: number[], basis: ReturnType<typeof getLocalBasis>) => {
-  const delta = [point[0] - center[0], point[1] - center[1], point[2] - center[2]]
-  return [dot(delta, basis.east), dot(delta, basis.up), -dot(delta, basis.north)]
+const local = (p: ArrayLike<number>, c: number[], b: ReturnType<typeof basis>) => {
+  const d = [p[0] - c[0], p[1] - c[1], p[2] - c[2]]
+  return [dot(d, b.east), dot(d, b.up), -dot(d, b.north)]
 }
 
-const transformPosition = (M: ArrayLike<number>, vertices: Uint8Array, i: number) => {
-  const [x, y, z] = [vertices[i * 8], vertices[i * 8 + 1], vertices[i * 8 + 2]]
+const pos = (m: ArrayLike<number>, vs: Uint8Array, i: number) => {
+  const [x, y, z] = [vs[i * 8], vs[i * 8 + 1], vs[i * 8 + 2]]
 
-  return [x * M[0] + y * M[4] + z * M[8] + M[12],
-  x * M[1] + y * M[5] + z * M[9] + M[13],
-  x * M[2] + y * M[6] + z * M[10] + M[14]]
+  return [
+    x * m[0] + y * m[4] + z * m[8] + m[12],
+    x * m[1] + y * m[5] + z * m[9] + m[13],
+    x * m[2] + y * m[6] + z * m[10] + m[14]
+  ]
 }
 
-const toBase64 = (view: ArrayBufferView) => Buffer.from(view.buffer, view.byteOffset, view.byteLength).toString('base64')
+const getNode = async (n: NodeRef) => {
+  const url = buildNodeProxyUrl(n)
+  const r = await fetch(url)
+  if (!r.ok) throw new Error(`node request failed: ${r.status} ${url}`)
+  return (await (await decodeNode)(3, new Uint8Array(await r.arrayBuffer()))).payload
+}
 
-const getTriangles = (verts: Uint8Array, indices: Uint16Array, layerBounds: Uint32Array) => {
-  const triangles: number[] = []
-  const limit = Math.min(indices.length - 2, layerBounds[3] ?? indices.length - 2)
+const getNodes = (ns: NodeRef[]) => Promise.all(ns.map(getNode))
 
-  for (let index = 0; index < limit; index += 1) {
-    const [a, b, c] = [indices[index], indices[index + 1], indices[index + 2]]
-    if (verts[a * 8 + 3] !== verts[b * 8 + 3] || verts[b * 8 + 3] !== verts[c * 8 + 3]) continue
-    triangles.push(...(index & 1 ? [a, c, b] : [a, b, c]))
+const tris = (vs: Uint8Array, ids: Uint16Array, lbs: Uint32Array) => {
+  const out: number[] = []
+  const n = Math.min(ids.length - 2, lbs[3])
+
+  for (let i = 0; i < n; i += 1) {
+    const [a, b, c] = [ids[i], ids[i + 1], ids[i + 2]]
+    if (vs[a * 8 + 3] !== vs[b * 8 + 3] || vs[b * 8 + 3] !== vs[c * 8 + 3]) continue
+    out.push(...(i & 1 ? [a, c, b] : [a, b, c]))
   }
 
-  return triangles
+  return out
 }
 
-const decodeUvs = (vertices: Uint8Array, uvOffsetAndScale: Float32Array) => {
-  const uvs = new Float32Array((vertices.length / 8) * 2)
+const uvs = (vs: Uint8Array, s: Float32Array) => {
+  const out = new Float32Array(vs.length / 4)
 
-  for (let index = 0; index < vertices.length / 8; index += 1) {
-    const offset = index * 8
-    const u = vertices[offset + 5] * 256 + vertices[offset + 4]
-    const v = vertices[offset + 7] * 256 + vertices[offset + 6]
+  for (let i = 0; i < vs.length / 8; i += 1) {
+    const j = i * 8
+    const u = vs[j + 5] * 256 + vs[j + 4]
+    const v = vs[j + 7] * 256 + vs[j + 6]
 
-    uvs[index * 2] = (u + uvOffsetAndScale[0]) * uvOffsetAndScale[2]
-    uvs[index * 2 + 1] = (v + uvOffsetAndScale[1]) * uvOffsetAndScale[3]
+    out[i * 2] = (u + s[0]) * s[2]
+    out[i * 2 + 1] = (v + s[1]) * s[3]
   }
 
-  return uvs
+  return out
 }
 
-const decodeMesh = (
-  packet: ModelPacket, meshI: number, matrix: ArrayLike<number>,
-  mesh: DecodedMesh, center: number[], basis: ReturnType<typeof getLocalBasis>) => {
-  if (!mesh.vertices?.length || !mesh.indices?.length || !mesh.layerBounds?.length)
-    return
-
-  const vertN = mesh.vertices.length / 8
-  const pos = new Float32Array(vertN * 3)
-
-  for (let i = 0; i < vertN; i += 1) {
-    const point = toLocalPoint(transformPosition(matrix, mesh.vertices, i), center, basis)
-    pos[i * 3] = point[0]
-    pos[i*3 + 1] = point[1]
-    pos[i*3 + 2] = point[2]
+const tex = (x: DecodedMesh): SceneTexture => {
+  const t = x.texture
+  return {
+    w: t.width, h: t.height,
+    data: decodeDxt1(new DataView(t.bytes.buffer, t.bytes.byteOffset, t.bytes.byteLength), t.width, t.height, 'dxt1')
   }
-
-  const tris = getTriangles(mesh.vertices, mesh.indices, mesh.layerBounds)
-
-  if (!tris.length)
-    return
-
-  const result: ModelSceneMesh = { id: `${packet.id}:${meshI}`, positions: toBase64(pos), indices: toBase64(Uint32Array.from(tris)) }
-
-  if (mesh.uvOffsetAndScale)
-    result.uvs = toBase64(decodeUvs(mesh.vertices, mesh.uvOffsetAndScale))
-
-  if (mesh.texture)
-    result.texture = { url: buildModelTextureUrl(packet, meshI) }
-
-  return result
 }
 
-export const discoverModelScene = async (lat: number, lng: number, meters: number): Promise<ModelSceneResponse> => {
-  const model = await discoverModel(lat, lng, meters)
-  const nodes = selectDeepestNodes(model.nodes)
-  const decoded = await Promise.all(nodes.map(async p => ({ packet: p, node: await fetchDecodedNodeData(p) })))
-  const center = decoded.length
-    ? decoded.reduce((sum, { node }) => {
-      const matrix = node.matrixGlobeFromMesh ?? []
-      sum[0] += matrix[12] ?? 0
-      sum[1] += matrix[13] ?? 0
-      sum[2] += matrix[14] ?? 0
-      return sum
-    }, [0, 0, 0]) : [0, 0, 0]
+const mesh = (m: ArrayLike<number>, x: DecodedMesh, c: number[], b: ReturnType<typeof basis>): SceneMesh => {
+  const n = x.vertices.length / 8
+  const ps = new Float32Array(n * 3)
 
-  if (decoded.length) {
-    center[0] /= decoded.length
-    center[1] /= decoded.length
-    center[2] /= decoded.length
+  for (let j = 0; j < n; j += 1) {
+    const p0 = local(pos(m, x.vertices, j), c, b)
+    ps[j * 3] = p0[0]
+    ps[j * 3 + 1] = p0[1]
+    ps[j * 3 + 2] = p0[2]
   }
 
-  const basis = getLocalBasis(lat, lng)
-  const meshes = decoded.flatMap(({ packet, node }) =>
-    (node.meshes ?? []).map((m, i) => decodeMesh(packet, i, node.matrixGlobeFromMesh ?? [], m, center, basis)).filter(m => !!m))
+  const is = tris(x.vertices, x.indices, x.layerBounds)
 
-  return { meshes, query: { lat, lng, meters }, nodes: { total: model.nodes.length, rendered: nodes.length } }
+  return {
+    positions: ps,
+    indices: Uint32Array.from(is),
+    uvs: x.uvOffsetAndScale ? uvs(x.vertices, x.uvOffsetAndScale) : undefined,
+    texture: tex(x)
+  }
+}
+
+const center = (ns: DecodedNode[]) =>
+  ns.reduce((a, n) => {
+    const m = n.matrixGlobeFromMesh
+    return [a[0] + m[12], a[1] + m[13], a[2] + m[14]]
+  }, [0, 0, 0]).map((c: number) => c / ns.length)
+
+const meshes = (ns: DecodedNode[], c: number[], b: ReturnType<typeof basis>) =>
+  ns.flatMap(n => n.meshes.map(x => mesh(n.matrixGlobeFromMesh, x, c, b)))
+
+export const buildModelScene = async (model: ModelDiscoveryResponse) => {
+  const ns = await getNodes(model.nodes)
+  return meshes(ns, center(ns), basis(model.query.lat, model.query.lng))
 }
