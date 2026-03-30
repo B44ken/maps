@@ -1,6 +1,5 @@
 import { json, readParamNumbers } from '@/lib/google'
 import { discoverModel } from '@/lib/model'
-export const runtime = 'nodejs',  dynamic = 'force-dynamic'
 
 export async function GET(request: Request) {
   const { lat, lng } = readParamNumbers(new URL(request.url), ['lat', 'lng'])

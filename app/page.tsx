@@ -1,5 +1,5 @@
 'use client'
-import type { ModelDiscoveryResponse, PanoSearchResponse } from '@/lib/types'
+import type { ModelResponse, PanoSearchResponse } from '@/lib/types'
 import { useEffect, useState } from 'react'
 import { ModelViewer } from '@/components/model-viewer'
 import { App, Card, Input, Btn, Grid, D, Muted, Scroll, H2, B } from 'b44ui'
@@ -11,13 +11,9 @@ export default function Page() {
   const [lng, setLng] = useState(lng0)
   const [panos, setPanos] = useState<PanoSearchResponse | null>(null)
   const [panoUrl, setPanoUrl] = useState(blank)
-  const [model, setModel] = useState<ModelDiscoveryResponse | null>(null)
+  const [model, setModel] = useState<ModelResponse | null>(null)
 
-  const loadPano = async (id: string) => {
-    const r = await fetch(`/api/panos/${id}`)
-    if (!r.ok) throw new Error(`pano request failed: ${r.status}`)
-    setPanoUrl((await r.json()).pano.previewUrl)
-  }
+  const loadPano = (id: string) => setPanoUrl(`/api/panos/${id}?zoom=0&x=0&y=0`)
 
   const load = async (a = lat, b = lng) => {
     const [panoReq, modelReq] = await Promise.all([
@@ -30,10 +26,10 @@ export default function Page() {
 
     const panos = (await panoReq.json()) as PanoSearchResponse
     setPanos(panos)
-    setModel((await modelReq.json()) as ModelDiscoveryResponse)
+    setModel((await modelReq.json()) as ModelResponse)
 
     if (panos.panos.length)
-      await loadPano(panos.panos[0].id)
+      loadPano(panos.panos[0].id)
     else
       setPanoUrl(blank)
 

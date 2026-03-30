@@ -7,16 +7,13 @@ import {
   type BulkEntry,
   type BulkPacket
 } from './rocktree'
-import type { BulkRef, ModelDiscoveryResponse, NodeRef } from './types'
+import type { ModelResponse } from './types'
 
 type Box = { n: number, s: number, w: number, e: number }
 type Step = { path: string, epoch: number, entry: BulkEntry }
 type Hit = { octant: string, bulk: BulkPacket, chain: Step[] }
 
-const nodeQs = ({ version, textureFormat, imageryEpoch }: NodeRef) =>
-  `version=${version}&textureFormat=${textureFormat}${imageryEpoch === undefined ? '' : `&imageryEpoch=${imageryEpoch}`}`
-
-export const buildNodeProxyUrl = (n: NodeRef) => `/api/model/node/${n.id}?${nodeQs(n)}`
+export const buildNodeProxyUrl = (n: string) => `/api/model/node/${n}`
 
 const getFirstOctant = (lat: number, lng: number) => {
   if(lat < 0 && lng < -90) return ['02', { n: 0, s: -90, w: -180, e: -90 }] as const
@@ -102,25 +99,19 @@ const findLeaves = async (lat: number, lng: number, max = 20): Promise<Hit[]> =>
   return search(octant, box)
 }
 
-const toBulkRef = (id: string, version: number): BulkRef => ({ id, version })
+const toBulkRef = (id: string): string => id
+const toNodeRef = (entry: BulkEntry): string => entry.fullPath
 
-const toNodeRef = (entry: BulkEntry): NodeRef => ({
-  id: entry.fullPath,
-  version: entry.epoch,
-  textureFormat: entry.textureFormat,
-  imageryEpoch: entry.useImageryEpoch ? entry.imageryEpoch : undefined
-})
-
-export const discoverModel = async (lat: number,lng: number): Promise<ModelDiscoveryResponse> => {
+export const discoverModel = async (lat: number,lng: number): Promise<ModelResponse> => {
   const found = await findLeaves(lat, lng)
   const octants = found.map(x => x.octant)
-  const bulk = new Map<string, BulkRef>()
-  const nodes = new Map<string, NodeRef>()
+  const bulk = new Map<string, string>()
+  const nodes = new Map<string, string>()
 
   for (const hit of found) {
     for (const step of hit.chain)
       if (step.path)
-        bulk.set(step.path, toBulkRef(step.path, step.epoch))
+        bulk.set(step.path, toBulkRef(step.path))
 
     for (const step of hit.chain)
       if (hasRich3dData(step.entry) && step.entry.hasObb)
@@ -132,7 +123,7 @@ export const discoverModel = async (lat: number,lng: number): Promise<ModelDisco
   }
 
   const ns = [...nodes.values()]
-  const depth = Math.max(...ns.map(n => n.id.length))
+  const depth = Math.max(...ns.map(n => n.length))
 
-  return { query: { lat, lng }, octants, bulk: [...bulk.values()], nodes: ns.filter(n => n.id.length == depth) }
+  return { query: { lat, lng }, octants, bulk: [...bulk.values()], nodes: ns.filter(n => n.length == (depth-3)) }
 }

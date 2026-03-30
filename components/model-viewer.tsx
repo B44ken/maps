@@ -1,21 +1,18 @@
 'use client'
-
 import { useEffect, useRef } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
-
 import { buildModelScene } from '@/lib/model-scene'
-import type { ModelDiscoveryResponse } from '@/lib/types'
+import type { ModelResponse } from '@/lib/types'
 
 const tex = (x: Awaited<ReturnType<typeof buildModelScene>>[number]['texture']) => {
   const t = new THREE.DataTexture(x.data, x.w, x.h, THREE.RGBAFormat)
   t.colorSpace = THREE.SRGBColorSpace
-  t.flipY = false
   t.needsUpdate = true
   return t
 }
 
-export function ModelViewer({ model }: { model: ModelDiscoveryResponse }) {
+export function ModelViewer({ model }: { model: ModelResponse }) {
   const ref = useRef<HTMLDivElement>(null!)
 
   useEffect(() => {
@@ -30,12 +27,10 @@ export function ModelViewer({ model }: { model: ModelDiscoveryResponse }) {
       const meshes = await buildModelScene(model)
       if (dead) return
 
-      const world = new THREE.Scene(), camera = new THREE.PerspectiveCamera()
-      const renderer = new THREE.WebGLRenderer()
-      const controls = new OrbitControls(camera, renderer.domElement)
-      done.push(() => controls.dispose(), () => renderer.dispose())
+      const world = new THREE.Scene(), cam = new THREE.PerspectiveCamera(), render = new THREE.WebGLRenderer(), control = new OrbitControls(cam, render.domElement)
+      done.push(control.dispose, render.dispose)
 
-      host.replaceChildren(renderer.domElement)
+      host.replaceChildren(render.domElement)
 
       for (const mesh of meshes) {
         const g = new THREE.BufferGeometry()
@@ -46,9 +41,8 @@ export function ModelViewer({ model }: { model: ModelDiscoveryResponse }) {
           g.setAttribute('uv', new THREE.BufferAttribute(mesh.uvs, 2))
 
         const m = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide })
-        const t = tex(mesh.texture)
-        m.map = t
-        ts.push(t)
+        m.map = tex(mesh.texture)
+        ts.push(m.map)
 
         gs.push(g)
         ms.push(m)
@@ -59,19 +53,17 @@ export function ModelViewer({ model }: { model: ModelDiscoveryResponse }) {
       const c = box.getCenter(new THREE.Vector3())
       const size = box.getSize(new THREE.Vector3()).length() || 200
 
-      controls.target.copy(c)
-      camera.position.set(c.x + size * 0.7, c.y + size * 0.45, c.z + size)
-      camera.near = Math.max(1, size / 500)
-      camera.far = size * 10
-      camera.aspect = 1
-      camera.updateProjectionMatrix()
-      camera.lookAt(c)
+      control.target.copy(c)
+      cam.position.set(c.x + size * 0.7, c.y + size * 0.45, c.z + size)
+      cam.near = Math.max(1, size / 500)
+      cam.far = size * 10
+      cam.lookAt(c)
 
-      renderer.setSize(750, 750, false)
+      render.setSize(750, 750, false)
 
       const tick = () => {
-        controls.update()
-        renderer.render(world, camera)
+        control.update()
+        render.render(world, cam)
         frame = requestAnimationFrame(tick)
       }
 
@@ -89,5 +81,5 @@ export function ModelViewer({ model }: { model: ModelDiscoveryResponse }) {
     }
   }, [model])
 
-  return <div ref={ref} style={{ width: '100%', aspectRatio: '3 / 2' }} />
+  return <div ref={ref} />
 }

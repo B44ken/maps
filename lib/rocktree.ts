@@ -39,13 +39,11 @@ type RawNodeMetadata = {
   bulkMetadataEpoch?: number
   orientedBoundingBox?: Uint8Array
   imageryEpoch?: number
-  availableTextureFormats?: number
 }
 
 type RawBulkMetadata = {
   headNodeKey?: { path?: string }
   defaultImageryEpoch?: number
-  defaultAvailableTextureFormats?: number
   nodeMetadata?: RawNodeMetadata[]
 }
 
@@ -57,9 +55,6 @@ export type BulkEntry = {
   flags: number
   epoch: number
   bulkEpoch: number
-  imageryEpoch: number
-  textureFormat: number
-  useImageryEpoch: boolean
   hasObb: boolean
 }
 
@@ -70,7 +65,6 @@ const planetoidType = root.lookupType(
   'geo_globetrotter_proto_rocktree.PlanetoidMetadata'
 )
 const bulkType = root.lookupType('geo_globetrotter_proto_rocktree.BulkMetadata')
-const preferredTextureFormats = [6, 1]
 
 const unpackPathAndFlags = (value: number) => {
   const level = 1 + (value & 3)
@@ -85,10 +79,6 @@ const unpackPathAndFlags = (value: number) => {
   return { path, flags: remaining }
 }
 
-const pickTextureFormat = (mask: number) =>
-  preferredTextureFormats.find(format => mask & (1 << (format - 1))) ??
-  preferredTextureFormats[0]
-
 const decodePlanetoid = (payload: Uint8Array) =>
   planetoidType.decode(payload) as unknown as RawPlanetoidMetadata
 
@@ -98,10 +88,6 @@ const decodeBulk = (payload: Uint8Array) => {
   const entries =
     decoded.nodeMetadata?.map(node => {
       const meta = unpackPathAndFlags(node.pathAndFlags)
-      const textureMask =
-        node.availableTextureFormats ??
-        decoded.defaultAvailableTextureFormats ??
-        preferredTextureFormats[0]
 
       return {
         path: meta.path,
@@ -110,7 +96,6 @@ const decodeBulk = (payload: Uint8Array) => {
         epoch: node.epoch ?? 0,
         bulkEpoch: node.bulkMetadataEpoch ?? 0,
         imageryEpoch: node.imageryEpoch ?? decoded.defaultImageryEpoch ?? 0,
-        textureFormat: pickTextureFormat(textureMask),
         useImageryEpoch: !!(meta.flags & 16),
         hasObb: !!node.orientedBoundingBox?.length
       }
