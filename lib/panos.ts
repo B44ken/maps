@@ -1,42 +1,33 @@
 import { fetchGoogleJson, haversineMeters, latLngToTile, tileNeighbors } from './google'
-import type { PanoSearchResponse, PanoSummary, TileRef } from './types'
+import type { Panos, Pano, XYZ } from './types'
 
-const buildAutocompleteUrl = ({ x, y, z }: TileRef) =>
+const buildAutocompleteUrl = ({ x, y, z }: XYZ) =>
   `https://www.google.com/maps/photometa/ac/v1?pb=!1m1!1smaps_sv.tactile!6m3!1i${x}!2i${y}!3i${z}!8b1`
 
-const visitArrays = (value: unknown, visitor: (node: unknown[]) => void) => {
-  if (!Array.isArray(value)) return
-  visitor(value)
-  value.forEach(c => visitArrays(c, visitor))
+const visitArrays = (x: unknown, visitor: (node: unknown[]) => void) => {
+  if (!Array.isArray(x)) return
+  visitor(x)
+  x.forEach(y => visitArrays(y, visitor))
 }
 
-const parsePanoNode = (node: unknown[]): Omit<PanoSummary, 'distanceMeters'> | null => {
-  if (!Array.isArray(node[0]))
-    return null
-
-  const identity = node[0] as any[]
-
-  if (identity[0] !== 2 || typeof identity[1] !== 'string' || !Array.isArray(node[2]))
-    return null
-
-  const pose = node[2] as any[]
-
-  return { lat: pose[0][2], lng: pose[0][3], heading: pose[2][0], pitch: pose[2][1], roll: pose[2][2], id: identity[1] }
+const parsePanoNode = (node: unknown[]): Pano | null => {
+  if (!Array.isArray(node[0]) || node[0][0] !== 2 || typeof node[0][1] !== 'string' || !Array.isArray(node[2])) return null
+  return { lat: node[2][0][2], lng: node[2][0][3], height: node[2][1][2], heading: node[2][2][0], pitch: node[2][2][1], roll: node[2][2][2], id: node[0][1], dist: -1 }
 }
 
-export const discoverPanos = async (lat: number, lng: number, zoom: number, radius: number): Promise<PanoSearchResponse> => {
+export const discoverPanos = async (lat: number, lng: number, zoom: number, radius: number): Promise<Panos> => {
   const center = latLngToTile(lat, lng, zoom)
   const tiles = tileNeighbors(center, radius)
   const payloads = await Promise.all(tiles.map(t => fetchGoogleJson<unknown>(buildAutocompleteUrl(t))))
-  const panos = new Map<string, PanoSummary>()
+  const panos = new Map<string, Pano>()
 
   payloads.forEach(pl => {
     visitArrays(pl, node => {
       const pano = parsePanoNode(node)
       if (!pano || panos.has(pano.id)) return
-      panos.set(pano.id, { ...pano, distanceMeters: haversineMeters(lat, lng, pano.lat, pano.lng) })
+      panos.set(pano.id, { ...pano, dist: haversineMeters(lat, lng, pano.lat, pano.lng) })
     })
   })
 
-  return { query: { lat, lng, zoom, radius }, tiles, panos: [...panos.values()].sort((a, b) => a.distanceMeters - b.distanceMeters) }
+  return { query: { lat, lng, zoom, radius }, tiles, panos: [...panos.values()].sort((a, b) => a.dist - b.dist) }
 }

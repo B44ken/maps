@@ -1,13 +1,20 @@
 // @ts-ignore
 import decodeNode from './vendor/decode-resource.cjs'
 import decodeDXT from 'decode-dxt'
-import type { ModelResponse } from './types'
+import type { Model } from './types'
 
 type DecodedMesh = {
   vertices: Uint8Array, indices: Uint16Array, uvOffsetAndScale?: Float32Array
   texture: { bytes: Uint8Array, width: number, height: number }
 }
 type DecodedNode = { matrixGlobeFromMesh: ArrayLike<number>, meshes: DecodedMesh[] }
+export type BuiltMesh = {
+  positions: Float32Array
+  indices: Uint32Array
+  uvs?: Float32Array
+  texture: { w: number, h: number, data: Uint8Array }
+}
+const earthR = 6371000
 
 const basis = (lat: number, lng: number) => {
   const a = lat * Math.PI / 180, b = lng * Math.PI / 180
@@ -17,6 +24,27 @@ const basis = (lat: number, lng: number) => {
     north: [-sa * cb, -sa * sb, ca],
     up: [ca * cb, ca * sb, sa]
   }
+}
+
+const rotateLocal = (b: ReturnType<typeof basis>, pt: ArrayLike<number>) => [
+  pt[0] * b.east[0] + pt[1] * b.east[1] + pt[2] * b.east[2],
+  pt[0] * b.up[0] + pt[1] * b.up[1] + pt[2] * b.up[2],
+  -(pt[0] * b.north[0] + pt[1] * b.north[1] + pt[2] * b.north[2])
+]
+
+const latLngToGlobe = (lat: number, lng: number) => {
+  lat *= Math.PI / 180, lng *= Math.PI / 180
+  const sa = Math.sin(lat), ca = Math.cos(lat), sb = Math.sin(lng), cb = Math.cos(lng)
+  return [earthR * ca * cb, earthR * ca * sb, earthR * sa]
+}
+
+export const latLngToModel = (originLat: number, originLng: number, lat: number, lng: number) =>
+  rotateLocal(basis(originLat, originLng), latLngToGlobe(lat, lng))
+
+export const wgs84Height = (lat: number) => {
+  const a = 6378137, e2 = 6.69437999014e-3, s = Math.sin(lat * Math.PI / 180), c = Math.cos(lat * Math.PI / 180)
+  const n = a / Math.sqrt(1 - e2 * s * s)
+  return Math.sqrt((n * c) ** 2 + (n * (1 - e2) * s) ** 2)
 }
 
 const pos = (m: ArrayLike<number>, vs: Uint8Array, i: number) => {
@@ -41,13 +69,13 @@ const tris = ({ vertices: v, indices: i }: DecodedMesh) => {
 const uvs = (vs: Uint8Array, s: Float32Array) => {
   const out = new Float32Array(vs.length / 4)
   for (let i = 0; i < vs.length / 8; i++) {
-    out[i * 2] = (vs[i*8 + 5] * 256 + vs[i*8 + 4] + s[0]) * s[2]
-    out[i * 2 + 1] = (vs[i*8 + 7] * 256 + vs[i*8 + 6] + s[1]) * s[3]
+    out[i * 2] = (vs[i * 8 + 5] * 256 + vs[i * 8 + 4] + s[0]) * s[2]
+    out[i * 2 + 1] = (vs[i * 8 + 7] * 256 + vs[i * 8 + 6] + s[1]) * s[3]
   }
   return out
 }
 
-export const buildModelScene = async (m: ModelResponse, fetches: Record<string, number>) => {
+export const buildModelScene = async (m: Model, fetches: Record<string, number>): Promise<BuiltMesh[]> => {
   const nodes: DecodedNode[] = await Promise.all(m.nodes.map(i => {
     fetches[i] = 0
     return fetch(`/api/model/${i}`).then(r => r.arrayBuffer()).then(b => decodeNode(3, b)).then(r => {
@@ -58,19 +86,13 @@ export const buildModelScene = async (m: ModelResponse, fetches: Record<string, 
 
   const b = basis(m.query.lat, m.query.lng)
 
-  const rotateLocal = (pt: ArrayLike<number>) => [
-      pt[0] * b.east[0] + pt[1] * b.east[1] + pt[2] * b.east[2],
-      pt[0] * b.up[0] + pt[1] * b.up[1] + pt[2] * b.up[2],
-      -(pt[0] * b.north[0] + pt[1] * b.north[1] + pt[2] * b.north[2])
-    ]
-
   const mesh = (m: ArrayLike<number>, x: DecodedMesh) => {
     const n = x.vertices.length / 8
     const ps = new Float32Array(n * 3)
 
     for (let j = 0; j < n; j++) {
-      const [a, b, c] = rotateLocal(pos(m, x.vertices, j))
-      ps[j*3] = a, ps[j*3 + 1] = b, ps[j*3 + 2] = c
+      const [px, py, pz] = rotateLocal(b, pos(m, x.vertices, j))
+      ps[j * 3] = px, ps[j * 3 + 1] = py, ps[j * 3 + 2] = pz
     }
 
     return {

@@ -7,7 +7,7 @@ import {
   type BulkEntry,
   type BulkPacket
 } from './rocktree'
-import type { ModelResponse } from './types'
+import type { Model } from './types'
 
 type Box = { n: number, s: number, w: number, e: number }
 type Step = { path: string, epoch: number, entry: BulkEntry }
@@ -102,7 +102,7 @@ const findLeaves = async (lat: number, lng: number, max = 20): Promise<Hit[]> =>
 const toBulkRef = (id: string): string => id
 const toNodeRef = (entry: BulkEntry): string => entry.fullPath
 
-export const discoverModel = async (lat: number, lng: number, depth=20): Promise<ModelResponse> => {
+export const discoverModel = async (lat: number, lng: number, depth=20): Promise<Model> => {
   const found = await findLeaves(lat, lng)
   const octants = found.map(x => x.octant)
   const bulk = new Map<string, string>()

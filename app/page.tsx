@@ -1,23 +1,23 @@
 'use client'
-import type { ModelResponse, PanoSearchResponse } from '@/lib/types'
+import type { Model, Panos } from '@/lib/types'
 import { useEffect, useRef, useState } from 'react'
-import { ModelViewer } from '@/components/model-viewer'
+import { ModelViewer } from '@/components/viewmodel'
 import { App, Card, Input, Btn, Grid, D, Muted, Scroll, H2, B, Progress, Select } from 'b44ui'
 import { Scene } from 'three'
 import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js'
 import { PanoViewer } from '@/components/viewpano'
 
 export default function Page() {
-  const [panos, setPanos] = useState<PanoSearchResponse | null>(null)
-  const [model, setModel] = useState<ModelResponse | null>(null)
+  const [panos, setPanos] = useState<Panos | null>(null)
+  const [model, setModel] = useState<Model | null>(null)
   const [fetchRate, setFetchRate] = useState(0)
   const [panoId, setPanoId] = useState<string | null>(null)
-  let [ll, setLl] = useState(['43.66', '-79.39'])
+  let [ll, setLl] = useState(['43.661', '-79.392'])
   const fetches = useRef<Record<string, number>>({}).current
   const downloader = useRef<HTMLAnchorElement>(null!)
   const panoLoader = useRef<HTMLCanvasElement>(null!)
   const world = useRef<Scene>(new Scene())
-  const [panoZoom, setZoom] = useState(3), [modelDepth, setDepth] = useState(17)
+  const [panoZoom, setZoom] = useState(3), [modelDepth, setDepth] = useState('17')
 
   setInterval(() => setFetchRate(Object.values(fetches).reduce((a, b) => a + b, 0) / Object.keys(fetches).length), 16)
 
@@ -28,10 +28,10 @@ export default function Page() {
     ])
 
     if (!panoReq.ok || !modelReq.ok) throw new Error('model request failed')
-    const panos = (await panoReq.json()) as PanoSearchResponse
+    const panos = (await panoReq.json()) as Panos
     setPanos(panos)
     setPanoId(panos.panos[0]?.id)
-    setModel((await modelReq.json()) as ModelResponse)
+    setModel((await modelReq.json()) as Model)
   }
 
   useEffect(() => {
@@ -61,21 +61,21 @@ export default function Page() {
     <Card row>
       <H2 grow>maps viewer</H2>
 
-      <Select onInput={e => e.target.value != 0 && setZoom(Number(e.currentTarget.value))}>
-        <option value={0}>pano zoom</option>
-        <option value={5}>full (5)</option>
-        <option value={3}>medium (3)</option>
-        <option value={1}>lowest (1)</option>
+      <Select onChange={e => e.target.value && setZoom(Number(e.target.value))}>
+        <option value={''}>pano zoom</option>
+        <option value={'5'}>full (5)</option>
+        <option value={'3'}>medium (3)</option>
+        <option value={'1'}>lowest (1)</option>
       </Select>
-      <Select onInput={e => e.target.value != 0 && setDepth(Number(e.currentTarget.value))}>
-        <option value={0}>model depth</option>
-        <option value={20}>full (20)</option>
-        <option value={19}>medium (19)</option>
-        <option value={17}>low (17)</option>
+      <Select onChange={e => e.target.value && setDepth(e.target.value)}>
+        <option value={''}>model depth</option>
+        <option value={'20'}>full (20)</option>
+        <option value={'19'}>medium (19)</option>
+        <option value={'17'}>low (17)</option>
       </Select>
 
-      <Input state={[ll[0], (lat) => setLl([lat, ll[1]])]} placeholder='lat' />
-      <Input state={[ll[1], (lng) => setLl([ll[0], lng])]} placeholder='lng' />
+      <Input state={[ll[0], a => setLl([a as string, ll[1]])]} placeholder='lat' />
+      <Input state={[ll[1], b => setLl([ll[0], b as string])]} placeholder='lng' />
       <Btn onClick={() => void load()}>load</Btn>
     </Card>
 
@@ -90,7 +90,7 @@ export default function Page() {
 
         <Scroll>
           <Grid cols={3} gap={3}>
-            {panos?.panos.map(({ id, lat, lng, distanceMeters }) =>
+            {panos?.panos.map(({ id, lat, lng, dist: distanceMeters }) =>
               <Btn key={id} p={2} row click={() => setPanoId(id)}>
                 <B grow>{lat.toFixed(4)}, {lng.toFixed(4)}</B>
                 <Muted>{(distanceMeters / 1000).toFixed(3)}km</Muted>
@@ -106,7 +106,7 @@ export default function Page() {
           {fetchRate > 0 && fetchRate < 1 ? <Progress color='purple' value={fetchRate} wd={0.6} /> : null}
           {fetchRate == 1 && <Btn click={getGlb}>export glb</Btn>}
         </D>
-        {model && <ModelViewer {...{ model, world, fetches }} />}
+        {model && panos && <ModelViewer {...{ model, panos: panos.panos, panoId, world, fetches }} />}
       </Card>
     </Grid>
   </App>

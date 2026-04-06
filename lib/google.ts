@@ -1,4 +1,4 @@
-import type { TileRef } from './types'
+import type { XYZ } from './types'
 
 const g = {
   headers: { 'accept-language': 'en-CA,en;q=0.9', referer: 'https://www.google.com/maps', 'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36' },
@@ -29,7 +29,7 @@ export const json = (body: unknown) => Response.json(body, { headers: cc })
 export const bytes = (body: BodyInit, contentType: string) =>
   new Response(body, { headers: { 'content-type': contentType, ...cc } })
 
-export const latLngToTile = (lat: number, lng: number, zoom: number): TileRef => {
+export const latLngToTile = (lat: number, lng: number, zoom: number): XYZ => {
   const n = 2 ** zoom
   lat = (lat * Math.PI) / 180
   const x = Math.floor(((lng + 180) / 360) * n)
@@ -38,8 +38,8 @@ export const latLngToTile = (lat: number, lng: number, zoom: number): TileRef =>
   return { x, y, z: zoom }
 }
 
-export const tileNeighbors = ({ x, y, z }: TileRef, r: number) => {
-  const tiles: TileRef[] = []
+export const tileNeighbors = ({ x, y, z }: XYZ, r: number) => {
+  const tiles: XYZ[] = []
 
   for (let dy = -r; dy <= r; dy += 1)
     for (let dx = -r; dx <= r; dx += 1)
