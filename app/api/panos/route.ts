@@ -3,6 +3,6 @@ import { discoverPanos } from '@/lib/panos'
 export const runtime = 'nodejs', dynamic = 'force-dynamic'
 
 export async function GET(request: Request) {
-  const { lat, lng, zoom, radius } = readParamNumbers(new URL(request.url), ['lat', 'lng', 'zoom', 'radius'])
-  return json(await discoverPanos(lat, lng, Math.trunc(zoom), Math.trunc(radius)))
+  const { lat, lng, zoom, radius } = readParamNumbers(new URL(request.url), ['lat', 'lng', 'radius'])
+  return json(await discoverPanos(lat, lng, 17, Math.trunc(radius)))
 }

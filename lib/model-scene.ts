@@ -1,7 +1,6 @@
-//@ts-ignore
-import decodeDXT from 'decode-dxt'
 // @ts-ignore
 import decodeNode from './vendor/decode-resource.cjs'
+import decodeDXT from 'decode-dxt'
 import type { ModelResponse } from './types'
 
 type DecodedMesh = {
@@ -29,10 +28,6 @@ const pos = (m: ArrayLike<number>, vs: Uint8Array, i: number) => {
   ]
 }
 
-const getNodes = (n: string[]): Promise<DecodedNode[]> => 
-  Promise.all(n.map(i => fetch(`/api/model/${i}`)
-      .then(r => r.arrayBuffer()).then(b => decodeNode(3, b)).then(r => r.payload)))
-
 const tris = ({ vertices: v, indices: i }: DecodedMesh) => {
   const out = []
   for (let x = 0; x < i.length - 2; x++) {
@@ -52,29 +47,29 @@ const uvs = (vs: Uint8Array, s: Float32Array) => {
   return out
 }
 
-const findCenter = (ns: DecodedNode[]) =>
-  ns.reduce((a, { matrixGlobeFromMesh: m }) => [a[0] + m[12], a[1] + m[13], a[2] + m[14]], [0, 0, 0]).map(x => x / ns.length)
+export const buildModelScene = async (m: ModelResponse, fetches: Record<string, number>) => {
+  const nodes: DecodedNode[] = await Promise.all(m.nodes.map(i => {
+    fetches[i] = 0
+    return fetch(`/api/model/${i}`).then(r => r.arrayBuffer()).then(b => decodeNode(3, b)).then(r => {
+      fetches[i] = 1
+      return r.payload
+    })
+  }))
 
-export const buildModelScene = async (m: ModelResponse) => {
-  const ns = await getNodes(m.nodes)
-  const center = findCenter(ns)
   const b = basis(m.query.lat, m.query.lng)
 
-  const localCoords = (pt: ArrayLike<number>) => {
-    const dx = pt[0] - center[0], dy = pt[1] - center[1], dz = pt[2] - center[2]
-    return [
-      dx * b.east[0] + dy * b.east[1] + dz * b.east[2],
-      dx * b.up[0] + dy * b.up[1] + dz * b.up[2],
-      -(dx * b.north[0] + dy * b.north[1] + dz * b.north[2])
+  const rotateLocal = (pt: ArrayLike<number>) => [
+      pt[0] * b.east[0] + pt[1] * b.east[1] + pt[2] * b.east[2],
+      pt[0] * b.up[0] + pt[1] * b.up[1] + pt[2] * b.up[2],
+      -(pt[0] * b.north[0] + pt[1] * b.north[1] + pt[2] * b.north[2])
     ]
-  }
 
   const mesh = (m: ArrayLike<number>, x: DecodedMesh) => {
     const n = x.vertices.length / 8
     const ps = new Float32Array(n * 3)
 
     for (let j = 0; j < n; j++) {
-      const [a, b, c] = localCoords(pos(m, x.vertices, j))
+      const [a, b, c] = rotateLocal(pos(m, x.vertices, j))
       ps[j*3] = a, ps[j*3 + 1] = b, ps[j*3 + 2] = c
     }
 
@@ -88,5 +83,5 @@ export const buildModelScene = async (m: ModelResponse) => {
     }
   }
 
-  return ns.flatMap(n => n.meshes.map(x => mesh(n.matrixGlobeFromMesh, x)))
+  return nodes.flatMap(n => n.meshes.map(x => mesh(n.matrixGlobeFromMesh, x)))
 }

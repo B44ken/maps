@@ -102,7 +102,7 @@ const findLeaves = async (lat: number, lng: number, max = 20): Promise<Hit[]> =>
 const toBulkRef = (id: string): string => id
 const toNodeRef = (entry: BulkEntry): string => entry.fullPath
 
-export const discoverModel = async (lat: number,lng: number): Promise<ModelResponse> => {
+export const discoverModel = async (lat: number, lng: number, depth=20): Promise<ModelResponse> => {
   const found = await findLeaves(lat, lng)
   const octants = found.map(x => x.octant)
   const bulk = new Map<string, string>()
@@ -123,7 +123,7 @@ export const discoverModel = async (lat: number,lng: number): Promise<ModelRespo
   }
 
   const ns = [...nodes.values()]
-  const depth = Math.max(...ns.map(n => n.length))
+  depth ??= Math.max(...ns.map(n => n.length))
 
-  return { query: { lat, lng }, octants, bulk: [...bulk.values()], nodes: ns.filter(n => n.length == (depth-3)) }
+  return { query: { lat, lng }, octants, bulk: [...bulk.values()], nodes: ns.filter(n => n.length == depth) }
 }

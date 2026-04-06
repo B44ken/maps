@@ -4,6 +4,7 @@ import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { buildModelScene } from '@/lib/model-scene'
 import type { ModelResponse } from '@/lib/types'
+import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js'
 
 const tex = (x: Awaited<ReturnType<typeof buildModelScene>>[number]['texture']) => {
   const t = new THREE.DataTexture(x.data, x.w, x.h, THREE.RGBAFormat)
@@ -12,22 +13,20 @@ const tex = (x: Awaited<ReturnType<typeof buildModelScene>>[number]['texture']) 
   return t
 }
 
-export function ModelViewer({ model }: { model: ModelResponse }) {
+export function ModelViewer({ model, world, fetches }: { model: ModelResponse; world: React.RefObject<THREE.Scene>; fetches: Record<string, number> }) {
   const ref = useRef<HTMLDivElement>(null!)
-
   useEffect(() => {
-    const host = ref.current
-    let dead = false, frame = 0
+    const host = ref.current, frame = 0
     const gs: THREE.BufferGeometry[] = [], ms: THREE.Material[] = [], ts: THREE.Texture[] = []
-    const done: (() => void)[] = []
+    const done: (() => void)[] = [() => ts.forEach(t => t.dispose()), () => ms.forEach(m => m.dispose()), () => gs.forEach(g => g.dispose())]
 
     host.replaceChildren()
 
     void (async () => {
-      const meshes = await buildModelScene(model)
-      if (dead) return
+      const meshes = await buildModelScene(model, fetches)
 
-      const world = new THREE.Scene(), cam = new THREE.PerspectiveCamera(), render = new THREE.WebGLRenderer(), control = new OrbitControls(cam, render.domElement)
+      world.current = new THREE.Scene()
+      const cam = new THREE.PerspectiveCamera(), render = new THREE.WebGLRenderer(), control = new OrbitControls(cam, render.domElement)
       done.push(control.dispose, render.dispose)
 
       host.replaceChildren(render.domElement)
@@ -46,10 +45,10 @@ export function ModelViewer({ model }: { model: ModelResponse }) {
 
         gs.push(g)
         ms.push(m)
-        world.add(new THREE.Mesh(g, m))
+        world.current.add(new THREE.Mesh(g, m))
       }
 
-      const box = new THREE.Box3().setFromObject(world)
+      const box = new THREE.Box3().setFromObject(world.current)
       const c = box.getCenter(new THREE.Vector3())
       const size = box.getSize(new THREE.Vector3()).length() || 200
 
@@ -59,27 +58,25 @@ export function ModelViewer({ model }: { model: ModelResponse }) {
       cam.far = size * 10
       cam.lookAt(c)
 
-      render.setSize(750, 750, false)
+      render.setSize(750 * window.devicePixelRatio, 650 * window.devicePixelRatio, false)
 
       const tick = () => {
         control.update()
-        render.render(world, cam)
-        frame = requestAnimationFrame(tick)
+        render.render(world.current, cam)
+        requestAnimationFrame(tick)
       }
 
       tick()
     })()
 
     return () => {
-      dead = true
       cancelAnimationFrame(frame)
-      done.forEach(f => f())
-      ts.forEach(t => t.dispose())
-      ms.forEach(m => m.dispose())
-      gs.forEach(g => g.dispose())
       host.replaceChildren()
     }
   }, [model])
 
-  return <div ref={ref} />
+  return <>
+    <style>{`canvas { width: 100%; }`}</style>
+    <div ref={ref} />
+  </>
 }
