@@ -1,33 +1,15 @@
-import { fetchGoogleJson, haversineMeters, latLngToTile, tileNeighbors } from './google'
-import type { Panos, Pano, XYZ } from './types'
+import { fetchJson } from './google'
+const { cos, tan, floor, sqrt, log, pow, PI: pi } = Math, r = Math.PI / 180
 
-const buildAutocompleteUrl = ({ x, y, z }: XYZ) =>
-  `https://www.google.com/maps/photometa/ac/v1?pb=!1m1!1smaps_sv.tactile!6m3!1i${x}!2i${y}!3i${z}!8b1`
+export type Pano = { id: string, lat: number, lng: number, dist: number, height: number }
 
-const visitArrays = (x: unknown, visitor: (node: unknown[]) => void) => {
-  if (!Array.isArray(x)) return
-  visitor(x)
-  x.forEach(y => visitArrays(y, visitor))
-}
+const photometa = ({ x, y, z }: { x: number, y: number, z: number }): Promise<any> => fetchJson(`https://www.google.com/maps/photometa/ac/v1?pb=!1m1!1smaps_sv.tactile!6m3!1i${x}!2i${y}!3i${z}!8b1`)
+const neighbors = ({ x, y, z }: { x: number, y: number, z: number }) => [0,1,-1].flatMap((X,_,a) => a.map(Y => ({x:x+X,y:y+Y,z})))
+const dist = (a: number, b: number, c: number, d: number) => sqrt((c-a)**2 + ((d-b) * cos(r*a))**2) * 110600
+const tileXYZ = (lat: number, lng: number, z: number) => ({ x: floor((lng+180)*pow(2,z)/360 ), y: floor(((1 - log(tan(lat*r) + 1 / cos(lat*r)) / pi) / 2) * pow(2,z)), z })
 
-const parsePanoNode = (node: unknown[]): Pano | null => {
-  if (!Array.isArray(node[0]) || node[0][0] !== 2 || typeof node[0][1] !== 'string' || !Array.isArray(node[2])) return null
-  return { lat: node[2][0][2], lng: node[2][0][3], height: node[2][1][2], heading: node[2][2][0], pitch: node[2][2][1], roll: node[2][2][2], id: node[0][1], dist: -1 }
-}
-
-export const discoverPanos = async (lat: number, lng: number, zoom: number, radius: number): Promise<Panos> => {
-  const center = latLngToTile(lat, lng, zoom)
-  const tiles = tileNeighbors(center, radius)
-  const payloads = await Promise.all(tiles.map(t => fetchGoogleJson<unknown>(buildAutocompleteUrl(t))))
-  const panos = new Map<string, Pano>()
-
-  payloads.forEach(pl => {
-    visitArrays(pl, node => {
-      const pano = parsePanoNode(node)
-      if (!pano || panos.has(pano.id)) return
-      panos.set(pano.id, { ...pano, dist: haversineMeters(lat, lng, pano.lat, pano.lng) })
-    })
-  })
-
-  return { query: { lat, lng, zoom, radius }, tiles, panos: [...panos.values()].sort((a, b) => a.dist - b.dist) }
-}
+export const discoverPanos = async (qlat: number, qlng: number, z: number) =>
+  (await Promise.all(neighbors(tileXYZ(qlat, qlng, z)).map(photometa)))
+    .flat(4).filter((b: any) => typeof b?.[0]?.[1] == 'string')
+    .map(([[,id],,[[,,lat,lng],[height]]]) => ({ id, lat, lng, height, dist: dist(qlat, qlng, lat, lng) }))
+    .filter((p,_,a) => a.find(q => q.id == p.id) == p)

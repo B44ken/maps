@@ -2,25 +2,34 @@
 import { useEffect, useRef } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
-import { buildModelScene, latLngToModel, wgs84Height } from '@/lib/model-scene'
-import type { Model, Pano } from '@/lib/types'
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 
-const tex = (x: { data: Uint8Array, w: number, h: number }) => {
-  const t = new THREE.DataTexture(x.data, x.w, x.h, THREE.RGBAFormat)
-  t.colorSpace = 'srgb', t.needsUpdate = true
-  return t
+import { latLngToModel, wgs84Height } from '@/lib/model-space'
+import type { Pano } from '@/lib/panos'
+
+const disposeMaterial = (mat: THREE.Material) => {
+  Object.values(mat).forEach(v => (v instanceof THREE.Texture) && v.dispose())
+  mat.dispose()
 }
 
-export function ModelViewer({ model, panos, panoId, world, fetches }: { model: Model; panos: Pano[]; panoId: string | null; world: React.RefObject<THREE.Scene>; fetches: Record<string, number> }) {
-  const ref = useRef<HTMLDivElement>(null!), camRef = useRef<THREE.PerspectiveCamera | null>(null), controlRef = useRef<OrbitControls | null>(null)
-  const focusPano = () => {
-    if(!panoId || !camRef.current || !controlRef.current) return
-    const pano = panos.find(p => p.id == panoId)
-    if(!pano) return
+const disposeObject = (root: THREE.Object3D) =>
+  root.traverse(x => {
+    if (!(x instanceof THREE.Mesh)) return
+    x.geometry.dispose()
+    Array.isArray(x.material) ? x.material.forEach(disposeMaterial) : disposeMaterial(x.material)
+  })
 
-    const [x, , z] = latLngToModel(model.query.lat, model.query.lng, pano.lat, pano.lng)
+export function ModelViewer({ src, lat, lng, pano }: { src: string, lat: number, lng: number, pano?: Pano }) {
+  const ref = useRef<HTMLDivElement>(null!)
+  const camRef = useRef<THREE.PerspectiveCamera | null>(null)
+  const controlRef = useRef<OrbitControls | null>(null)
+
+  const focusPano = () => {
+    if (!pano || !camRef.current || !controlRef.current) return
+
+    const [x, , z] = latLngToModel(lat, lng, pano.lat, pano.lng)
     const cam = camRef.current, control = controlRef.current
-    const y = control.target.y + wgs84Height(pano.lat) - wgs84Height(model.query.lat) + pano.height
+    const y = control.target.y + wgs84Height(pano.lat) - wgs84Height(lat) + pano.height
     const dx = cam.position.x - control.target.x, dy = cam.position.y - control.target.y, dz = cam.position.z - control.target.z
 
     control.target.set(x, control.target.y, z)
@@ -29,68 +38,49 @@ export function ModelViewer({ model, panos, panoId, world, fetches }: { model: M
   }
   
   useEffect(() => {
-    const host = ref.current
-    let frame = 0
-    const geos: THREE.BufferGeometry[] = [], mats: THREE.Material[] = [], texts: THREE.Texture[] = []
+    const host = ref.current, scene = new THREE.Scene(), cam = new THREE.PerspectiveCamera(45, 75/65, 10, 10_000), render = new THREE.WebGLRenderer(), control = new OrbitControls(cam, render.domElement)
+    let frame = 0, object: THREE.Object3D, live = true
 
+    camRef.current = cam
+    controlRef.current = control
     host.replaceChildren()
+    host.replaceChildren(render.domElement)
+    render.setSize(750 * window.devicePixelRatio, 650 * window.devicePixelRatio, false)
 
     void (async () => {
-      const meshes = await buildModelScene(model, fetches)
+      object = (await new GLTFLoader().loadAsync(src)).scene
+      if (!live) return disposeObject(object)
 
-      world.current = new THREE.Scene()
-      const cam = new THREE.PerspectiveCamera(), render = new THREE.WebGLRenderer(), control = new OrbitControls(cam, render.domElement)
-      camRef.current = cam
-      controlRef.current = control
-      host.replaceChildren(render.domElement)
-
-      for (const mesh of meshes) {
-        const g = new THREE.BufferGeometry()
-        g.setAttribute('position', new THREE.BufferAttribute(mesh.positions, 3))
-        g.setIndex(new THREE.BufferAttribute(mesh.indices, 1))
-
-        if (mesh.uvs) g.setAttribute('uv', new THREE.BufferAttribute(mesh.uvs, 2))
-
-        const m = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide })
-        m.map = tex(mesh.texture)
-        texts.push(m.map)
-
-        geos.push(g)
-        mats.push(m)
-        world.current.add(new THREE.Mesh(g, m))
-      }
-
-      const box = new THREE.Box3().setFromObject(world.current)
+      scene.add(object)
+      const box = new THREE.Box3().setFromObject(object)
       const c = box.getCenter(new THREE.Vector3())
-      const size = box.getSize(new THREE.Vector3()).length() || 200
+      const radius = box.getSize(new THREE.Vector3()).length() || 200
 
       control.target.copy(c)
-      cam.position.set(c.x + size * 0.7, c.y + size * 0.45, c.z + size)
+      cam.position.set(c.x + radius * 0.7, c.y + radius * 0.45, c.z + radius)
       focusPano()
-
-      render.setSize(750 * window.devicePixelRatio, 650 * window.devicePixelRatio, false)
 
       const tick = () => {
         control.update()
-        render.render(world.current, cam)
+        render.render(scene, cam)
         frame = requestAnimationFrame(tick)
       }
       tick()
     })()
 
     return () => {
+      live = false
       cancelAnimationFrame(frame)
-      camRef.current = controlRef.current = null
+      controlRef.current?.dispose()
+      object && disposeObject(object)
+      render.dispose()
+      camRef.current = null
+      controlRef.current = null
       host.replaceChildren()
     }
-  }, [model, panos])
+  }, [src])
 
-  useEffect(() => {
-    focusPano()
-  }, [panoId])
+  useEffect(() => void focusPano(), [lat, lng, pano])
 
-  return <>
-    <style>{`canvas { width: 100%; }`}</style>
-    <div ref={ref} />
-  </>
+  return <> <style>{`canvas { width: 100%; }`}</style> <div ref={ref} /> </>
 }

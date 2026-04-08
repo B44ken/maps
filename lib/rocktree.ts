@@ -1,132 +1,41 @@
 import { parse } from 'protobufjs'
 
-import { fetchGoogleBuffer } from './google'
-
-const rocktreeProto = `
-syntax = "proto2";
-
+const rocktreeProto = `syntax = "proto2";
 package geo_globetrotter_proto_rocktree;
+message NodeKey { optional string path = 1; }
+message NodeMetadata { optional uint32 path_and_flags = 1; optional bytes oriented_bounding_box = 3; optional uint32 bulk_metadata_epoch = 5; }
+message BulkMetadata { repeated NodeMetadata node_metadata = 1; optional NodeKey head_node_key = 2; }
+message PlanetoidMetadata { optional NodeMetadata root_node_metadata = 1; }`
 
-message NodeKey {
-  optional string path = 1;
-  optional uint32 epoch = 2;
-}
+export type BulkEntry = { path: string, fullPath: string, flags: number, bulkEpoch: number, hasObb: boolean }
 
-message NodeMetadata {
-  optional uint32 path_and_flags = 1;
-  optional uint32 epoch = 2;
-  optional uint32 bulk_metadata_epoch = 5;
-  optional bytes oriented_bounding_box = 3;
-  optional uint32 imagery_epoch = 7;
-  optional uint32 available_texture_formats = 8;
-}
+const pb = parse(rocktreeProto).root, planetPb = pb.lookupType('geo_globetrotter_proto_rocktree.PlanetoidMetadata'), bulkPb = pb.lookupType('geo_globetrotter_proto_rocktree.BulkMetadata')
 
-message BulkMetadata {
-  repeated NodeMetadata node_metadata = 1;
-  optional NodeKey head_node_key = 2;
-  optional uint32 default_imagery_epoch = 5;
-  optional uint32 default_available_texture_formats = 6;
-}
-
-message PlanetoidMetadata {
-  optional NodeMetadata root_node_metadata = 1;
-}
-`
-
-type RawNodeMetadata = {
-  pathAndFlags: number
-  epoch?: number
-  bulkMetadataEpoch?: number
-  orientedBoundingBox?: Uint8Array
-  imageryEpoch?: number
-}
-
-type RawBulkMetadata = {
-  headNodeKey?: { path?: string }
-  defaultImageryEpoch?: number
-  nodeMetadata?: RawNodeMetadata[]
-}
-
-type RawPlanetoidMetadata = { rootNodeMetadata?: { bulkMetadataEpoch?: number } }
-
-export type BulkEntry = {
-  path: string
-  fullPath: string
-  flags: number
-  epoch: number
-  bulkEpoch: number
-  hasObb: boolean
-}
-
-export type BulkPacket = { entries: BulkEntry[], byPath: Map<string, BulkEntry> }
-
-const root = parse(rocktreeProto).root
-const planetoidType = root.lookupType(
-  'geo_globetrotter_proto_rocktree.PlanetoidMetadata'
-)
-const bulkType = root.lookupType('geo_globetrotter_proto_rocktree.BulkMetadata')
-
-const unpackPathAndFlags = (value: number) => {
-  const level = 1 + (value & 3)
-  let remaining = value >> 2
-  let path = ''
-
-  for (let index = 0; index < level; index += 1) {
-    path += String(remaining & 7)
-    remaining >>= 3
-  }
-
+const unpackPathFlags = (value: number) => {
+  let remaining = value >> 2, path = ''
+  for (let i = 0; i < 1 + (value & 3); i += 1)
+    path += String(remaining & 7), remaining >>= 3
   return { path, flags: remaining }
 }
 
-const decodePlanetoid = (payload: Uint8Array) =>
-  planetoidType.decode(payload) as unknown as RawPlanetoidMetadata
-
-const decodeBulk = (payload: Uint8Array) => {
-  const decoded = bulkType.decode(payload) as unknown as RawBulkMetadata
-  const headPath = decoded.headNodeKey?.path ?? ''
-  const entries =
-    decoded.nodeMetadata?.map(node => {
-      const meta = unpackPathAndFlags(node.pathAndFlags)
-
-      return {
-        path: meta.path,
-        fullPath: `${headPath}${meta.path}`,
-        flags: meta.flags,
-        epoch: node.epoch ?? 0,
-        bulkEpoch: node.bulkMetadataEpoch ?? 0,
-        imageryEpoch: node.imageryEpoch ?? decoded.defaultImageryEpoch ?? 0,
-        useImageryEpoch: !!(meta.flags & 16),
-        hasObb: !!node.orientedBoundingBox?.length
-      }
-    }) ?? []
-
-  return {
-    entries,
-    byPath: new Map(entries.map(entry => [entry.path, entry]))
-  } satisfies BulkPacket
+const decodeBulk = (pl: Uint8Array): BulkEntry[] => {
+  const dec = bulkPb.decode(pl) as any
+  const head = dec.headNodeKey?.path ?? ''
+  return (dec.nodeMetadata ?? []).map(({ pathAndFlags, bulkMetadataEpoch: bulkEpoch, orientedBoundingBox }: any) => {
+    const { flags, path } = unpackPathFlags(pathAndFlags)
+    return { path, fullPath: `${head}${path}`, flags, bulkEpoch, hasObb: !!orientedBoundingBox?.length }
+  })
 }
 
-const planetoidPromise = fetchGoogleBuffer('https://kh.google.com/rt/earth/PlanetoidMetadata').then(decodePlanetoid)
+const planetoid = fetch('https://kh.google.com/rt/earth/PlanetoidMetadata').then(r => r.arrayBuffer()).then(b => planetPb.decode(new Uint8Array(b)) as any)
+export const rootEpoch = planetoid.then(p => p.rootNodeMetadata.bulkMetadataEpoch as number)
 
-const bulkPromises = new Map<string, Promise<BulkPacket>>()
-
-export const getRootBulkEpoch = async () => {
-  const epoch = (await planetoidPromise).rootNodeMetadata?.bulkMetadataEpoch
-  if (epoch === undefined) throw new Error('missing root bulk epoch')
-  return epoch
+const cache = new Map<string, Promise<BulkEntry[]>>()
+export const fetchBulk = async (path: string, e: number) => {
+  if (!cache.has(path))
+    cache.set(path, fetch(`https://kh.google.com/rt/earth/BulkMetadata/pb=!1m2!1s${path}!2u${e}`).then(r => r.arrayBuffer()).then(b => decodeBulk(new Uint8Array(b))))
+  return cache.get(path)!
 }
 
-export const fetchBulk = async (path: string, epoch: number) => {
-  const key = `${path}:${epoch}`
-
-  if (!bulkPromises.has(key))
-    bulkPromises.set(key, fetchGoogleBuffer(`https://kh.google.com/rt/earth/BulkMetadata/pb=!1m2!1s${path}!2u${epoch}`).then(decodeBulk))
-
-  return bulkPromises.get(key)!
-}
-
-export const getBulkRelativePath = (p: string) => p.slice(Math.floor((p.length - 1) / 4) * 4)
-export const getBulkEntry = (b: BulkPacket, p: string) => b.byPath.get(getBulkRelativePath(p))
 export const canDescendToBulk = (e: BulkEntry | undefined) => !!e && e.path.length === 4 && !(e.flags & 4)
 export const hasRich3dData = (e: BulkEntry | undefined) => !!e && !(e.flags & 2)

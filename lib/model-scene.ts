@@ -1,109 +1,36 @@
-// @ts-ignore
-import decodeNode from './vendor/decode-resource.cjs'
+import { decode } from './retroplasma/decode-resource'
 import decodeDXT from 'decode-dxt'
-import type { Model } from './types'
+import { fetchBuffer } from './google'
+import { basis, rotateLocal } from './model-space'
+import type { Model } from './model'
 
-type DecodedMesh = {
-  vertices: Uint8Array, indices: Uint16Array, uvOffsetAndScale?: Float32Array
-  texture: { bytes: Uint8Array, width: number, height: number }
-}
-type DecodedNode = { matrixGlobeFromMesh: ArrayLike<number>, meshes: DecodedMesh[] }
-export type BuiltMesh = {
-  positions: Float32Array
-  indices: Uint32Array
-  uvs?: Float32Array
-  texture: { w: number, h: number, data: Uint8Array }
-}
-const earthR = 6371000
-
-const basis = (lat: number, lng: number) => {
-  const a = lat * Math.PI / 180, b = lng * Math.PI / 180
-  const sa = Math.sin(a), ca = Math.cos(a), sb = Math.sin(b), cb = Math.cos(b)
-  return {
-    east: [-sb, cb, 0],
-    north: [-sa * cb, -sa * sb, ca],
-    up: [ca * cb, ca * sb, sa]
-  }
-}
-
-const rotateLocal = (b: ReturnType<typeof basis>, pt: ArrayLike<number>) => [
-  pt[0] * b.east[0] + pt[1] * b.east[1] + pt[2] * b.east[2],
-  pt[0] * b.up[0] + pt[1] * b.up[1] + pt[2] * b.up[2],
-  -(pt[0] * b.north[0] + pt[1] * b.north[1] + pt[2] * b.north[2])
-]
-
-const latLngToGlobe = (lat: number, lng: number) => {
-  lat *= Math.PI / 180, lng *= Math.PI / 180
-  const sa = Math.sin(lat), ca = Math.cos(lat), sb = Math.sin(lng), cb = Math.cos(lng)
-  return [earthR * ca * cb, earthR * ca * sb, earthR * sa]
-}
-
-export const latLngToModel = (originLat: number, originLng: number, lat: number, lng: number) =>
-  rotateLocal(basis(originLat, originLng), latLngToGlobe(lat, lng))
-
-export const wgs84Height = (lat: number) => {
-  const a = 6378137, e2 = 6.69437999014e-3, s = Math.sin(lat * Math.PI / 180), c = Math.cos(lat * Math.PI / 180)
-  const n = a / Math.sqrt(1 - e2 * s * s)
-  return Math.sqrt((n * c) ** 2 + (n * (1 - e2) * s) ** 2)
-}
+const loadNode = (id: string) => fetchBuffer(`https://kh.google.com/rt/earth/NodeData/pb=!1m2!1s${id}!2u!2e6!4b0`).then(decode)
 
 const pos = (m: ArrayLike<number>, vs: Uint8Array, i: number) => {
-  const j = i * 8, x = vs[j], y = vs[j + 1], z = vs[j + 2]
-  return [
-    x * m[0] + y * m[4] + z * m[8] + m[12],
-    x * m[1] + y * m[5] + z * m[9] + m[13],
-    x * m[2] + y * m[6] + z * m[10] + m[14]
-  ]
+  const x = vs[i*8], y = vs[i*8 + 1], z = vs[i*8 + 2]
+  return [x*m[0]+y*m[4]+z*m[8]+m[12], x*m[1]+y*m[5]+z*m[9]+m[13], x*m[2]+y*m[6]+z*m[10]+m[14]]
 }
 
-const tris = ({ vertices: v, indices: i }: DecodedMesh) => {
-  const out = []
-  for (let x = 0; x < i.length - 2; x++) {
-    const a = i[x], b = i[x + 1], c = i[x + 2]
-    if (v[a * 8 + 3] === v[b * 8 + 3] && v[b * 8 + 3] === v[c * 8 + 3])
-      x & 1 ? out.push(a, c, b) : out.push(a, b, c)
-  }
-  return out
-}
-
-const uvs = (vs: Uint8Array, s: Float32Array) => {
-  const out = new Float32Array(vs.length / 4)
-  for (let i = 0; i < vs.length / 8; i++) {
-    out[i * 2] = (vs[i * 8 + 5] * 256 + vs[i * 8 + 4] + s[0]) * s[2]
-    out[i * 2 + 1] = (vs[i * 8 + 7] * 256 + vs[i * 8 + 6] + s[1]) * s[3]
-  }
-  return out
-}
-
-export const buildModelScene = async (m: Model, fetches: Record<string, number>): Promise<BuiltMesh[]> => {
-  const nodes: DecodedNode[] = await Promise.all(m.nodes.map(i => {
-    fetches[i] = 0
-    return fetch(`/api/model/${i}`).then(r => r.arrayBuffer()).then(b => decodeNode(3, b)).then(r => {
-      fetches[i] = 1
-      return r.payload
-    })
-  }))
-
-  const b = basis(m.query.lat, m.query.lng)
-
-  const mesh = (m: ArrayLike<number>, x: DecodedMesh) => {
-    const n = x.vertices.length / 8
-    const ps = new Float32Array(n * 3)
-
-    for (let j = 0; j < n; j++) {
-      const [px, py, pz] = rotateLocal(b, pos(m, x.vertices, j))
-      ps[j * 3] = px, ps[j * 3 + 1] = py, ps[j * 3 + 2] = pz
+export const buildMesh = (m: Model): Promise<{posns:Float32Array<ArrayBuffer>,inds:Uint32Array<ArrayBuffer>,uvs:Float32Array<ArrayBuffer>,tex:{w:number,h:number,data:Uint8Array}}[]> =>
+  Promise.all(m.nodes.map(loadNode)).then(p => p.flatMap(node => node.meshes.map(n => {
+    const posns = new Float32Array(n.verts.length / 8 * 3)
+    for (let j = 0; j < posns.length; j += 3) {
+      const [px, py, pz] = rotateLocal(basis(m.lat, m.lng), pos(node.matrix, n.verts, j / 3))
+      posns[j] = px, posns[j + 1] = py, posns[j + 2] = pz
     }
 
-    return {
-      positions: ps, indices: Uint32Array.from(tris(x)),
-      uvs: x.uvOffsetAndScale ? uvs(x.vertices, x.uvOffsetAndScale) : undefined,
-      texture: {
-        w: x.texture.width, h: x.texture.height,
-        data: decodeDXT(new DataView(x.texture.bytes.buffer), x.texture.width, x.texture.height, 'dxt1')
-      }
+    const inds = new Uint32Array((n.inds.length - 2) * 3)
+    for (let x = 0; x < n.inds.length - 2; x++) {
+      const a = n.inds[x], b = n.inds[x + 1], c = n.inds[x + 2]
+      if (n.verts[a*8 + 3] == n.verts[b*8 + 3] && n.verts[b*8 + 3] == n.verts[c*8 + 3])
+        inds.set(x & 1 ? [a, c, b] : [a, b, c], x * 3)
     }
-  }
 
-  return nodes.flatMap(n => n.meshes.map(x => mesh(n.matrixGlobeFromMesh, x)))
-}
+    const uvs = new Float32Array(n.verts.length / 4)
+    for(let i = 0; i < n.verts.length; i += 8) {
+      uvs[i/4]   = (n.verts[i+5] << 8 | n.verts[i+4] + n.uv[0]) * n.uv[2]
+      uvs[i/4+1] = (n.verts[i+7] << 8 | n.verts[i+6] + n.uv[1]) * n.uv[3]
+    }
+
+    return { posns, inds, uvs, tex: { ...n.tex, data: decodeDXT(new DataView(n.tex.data.buffer), n.tex.w, n.tex.h, 'dxt1') } }
+  })))

@@ -35,7 +35,7 @@
     "**/*.tsx",
     ".next/types/**/*.ts",
     ".next/dev/types/**/*.ts"
-  ],
+, "lib/retroplasma/decode-resource.ts"  ],
   "exclude": [
     "node_modules"
   ]
