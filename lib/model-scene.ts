@@ -1,21 +1,34 @@
 import { decode } from './retroplasma/decode-resource'
 import decodeDXT from 'decode-dxt'
-import { fetchBuffer } from './google'
+import { fetchBuffer } from './util'
 import { basis, rotateLocal } from './model-space'
 import type { Model } from './model'
 
-const loadNode = (id: string) => fetchBuffer(`https://kh.google.com/rt/earth/NodeData/pb=!1m2!1s${id}!2u!2e6!4b0`).then(decode)
+const decodeList = (ids: string[]) => Promise.allSettled(ids.map(i => fetchBuffer(`https://kh.google.com/rt/earth/NodeData/pb=!1m2!1s${i}!2u!2e6!4b0`).then(decode)))
+  .then(rs => rs.flatMap(r => r.status == 'fulfilled' ? [r.value] : []))
+
+const decodeBatch = async (ids: string[], sz = 500) => {
+  const out = []
+  for (let i = 0; i < ids.length; i += sz)
+      out.push(...await decodeList(ids.slice(i, i + sz)))
+  return out
+}
 
 const pos = (m: ArrayLike<number>, vs: Uint8Array, i: number) => {
   const x = vs[i*8], y = vs[i*8 + 1], z = vs[i*8 + 2]
   return [x*m[0]+y*m[4]+z*m[8]+m[12], x*m[1]+y*m[5]+z*m[9]+m[13], x*m[2]+y*m[6]+z*m[10]+m[14]]
 }
 
-export const buildMesh = (m: Model): Promise<{posns:Float32Array<ArrayBuffer>,inds:Uint32Array<ArrayBuffer>,uvs:Float32Array<ArrayBuffer>,tex:{w:number,h:number,data:Uint8Array}}[]> =>
-  Promise.all(m.nodes.map(loadNode)).then(p => p.flatMap(node => node.meshes.map(n => {
+export const buildMesh = async (m: Model): Promise<{posns:Float32Array<ArrayBuffer>,inds:Uint32Array<ArrayBuffer>,uvs:Float32Array<ArrayBuffer>,tex:{w:number,h:number,data:Uint8Array}}[]> => {
+  const load = await decodeBatch(m.nodes)
+  console.log(`nodes ${m.nodes.length}, loaded ${load.length}`)
+
+  return load.flatMap(node => node.meshes.map(n => {
     const posns = new Float32Array(n.verts.length / 8 * 3)
     for (let j = 0; j < posns.length; j += 3) {
-      const [px, py, pz] = rotateLocal(basis(m.lat, m.lng), pos(node.matrix, n.verts, j / 3))
+      const p = pos(node.matrix, n.verts, j / 3)
+      // p[1] += wgs84Height(m.lat)
+      const [px, py, pz] = rotateLocal(basis(m.lat, m.lng), p)
       posns[j] = px, posns[j + 1] = py, posns[j + 2] = pz
     }
 
@@ -33,4 +46,5 @@ export const buildMesh = (m: Model): Promise<{posns:Float32Array<ArrayBuffer>,in
     }
 
     return { posns, inds, uvs, tex: { ...n.tex, data: decodeDXT(new DataView(n.tex.data.buffer), n.tex.w, n.tex.h, 'dxt1') } }
-  })))
+  }))
+}

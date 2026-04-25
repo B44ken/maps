@@ -1,4 +1,4 @@
-import { bytes, readNumbers } from '@/lib/google'
+import { bytes, readNumbers } from '@/lib/util'
 import { panoJpg } from 'lib/export'
 
 export const GET = async ({ url }: Request, { params }: { params: Promise<{ id: string }> }) =>

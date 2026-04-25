@@ -1,7 +1,10 @@
-export const modelUrl = (id: string) => `https://kh.google.com/rt/earth/NodeData/pb=!1m2!1s${id}!2u!2e6!4b0`
+const { cos, tan, floor, sqrt, log, pow, max, PI: pi } = Math, r = pi/180
+
+export const dist = (a: number, b: number, c: number, d: number) => sqrt((c-a)**2 + ((d-b) * cos(r*a))**2) * 111_319
+
+export const distBox = (lat: number, lng: number, [n, s, w, e]: number[]) => sqrt(max(0, s-lat, lat-n)**2 + (max(0, w-lng, lng-e) * cos(r*lat))**2) * 111_319
 
 const gh = { headers: { 'accept-language': 'en-CA', referer: 'https://google.com', 'user-agent': 'Mozilla/5.0; Chrome/136.0.0.0' } }
-
 export const fetchJson = async <T>(url: string): Promise<T> => JSON.parse((await fetch(url, gh).then(r => r.text())).replace(/^\)\]\}'\n?/, '')) as T
 export const fetchBuffer = async (url: string) => fetch(url, gh).then(r => r.arrayBuffer()).then(b => new Uint8Array(b))
 

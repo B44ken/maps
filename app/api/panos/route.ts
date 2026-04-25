@@ -1,4 +1,4 @@
-import { json, readNumbers } from '@/lib/google'
+import { json, readNumbers } from '@/lib/util'
 import { discoverPanos } from '@/lib/panos'
 
 export async function GET({ url }: { url: string }) {

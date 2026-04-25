@@ -1,8 +1,12 @@
-import { readNumbers } from '@/lib/google'
-import { discoverAt } from '@/lib/model'
+import { readNumbers } from '@/lib/util'
+import { discoverNear, discoverOctants } from '@/lib/model'
+import { modelGlb } from '@/lib/export'
 
 export const GET = async ({ url }: { url: string }) => {
-  const { lat, lng, size = 17, depth = 20 } = readNumbers(url, 'lat', 'lng', 'size', 'depth')
-  const ocs = await discoverAt(lat, lng, size, depth)
-  return new Response(null, ocs.length ? { status: 301, headers: { location: `/model/${ocs.join(',')}?lat=${lat}&lng=${lng}&depth=${depth}` } } : { status: 404, statusText: 'no model data here?' })
+  const { lat, lng, depth = 17, r = 250 } = readNumbers(url, 'lat', 'lng', 'depth', 'r', 'start')
+  const ocs = await discoverNear(lat, lng, depth, r)
+  if(!ocs.length) return new Response(null, { status: 404, statusText: 'no model data here?' })
+  const model = await discoverOctants(ocs, depth, lat, lng)
+  if (!model.nodes.length) return new Response('not found', { status: 404 })
+  return new Response(await modelGlb(model), { headers: { 'Content-Type': 'model/gltf-binary' } })
 }

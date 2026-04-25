@@ -2,7 +2,7 @@ import sharp from 'sharp'
 import { Document, NodeIO } from '@gltf-transform/core'
 import { KHRMaterialsUnlit } from '@gltf-transform/extensions'
 import { buildMesh } from './model-scene'
-import { fetchBuffer } from './google'
+import { fetchBuffer } from './util'
 import type { Model } from './model'
 
 export const modelGlb = async (model: Model) => {
